@@ -88,11 +88,6 @@ export function marchingCubes(
       if (v[i] > meshMax[i]) meshMax[i] = v[i];
     }
   }
-  if (vertices.length === 0) {
-    meshMin = [0, 0, 0];
-    meshMax = [0, 0, 0];
-  }
-
   return {
     vertices,
     indices,
@@ -172,7 +167,12 @@ function marchCube(
 function interpolate(p1: Vec3, p2: Vec3, v1: number, v2: number): Vec3 {
   if (Math.abs(v1) < 1e-10) return p1;
   if (Math.abs(v2) < 1e-10) return p2;
-  const t = -v1 / (v2 - v1); // isolevel = 0
+  const denom = v2 - v1;
+  if (Math.abs(denom) < 1e-10) {
+    // v1 ≈ v2: return midpoint to avoid NaN
+    return [(p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2, (p1[2] + p2[2]) / 2];
+  }
+  const t = Math.max(0, Math.min(1, -v1 / denom));
   return [
     p1[0] + t * (p2[0] - p1[0]),
     p1[1] + t * (p2[1] - p1[1]),

@@ -25,6 +25,11 @@ const shapes = new Map<string, ShapeEntry>();
 
 /** Store a shape and return its ID + readback. */
 export function create(shape: SDF, type: string, name?: string): ShapeResult {
+  if (name !== undefined && !/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(
+      `Invalid shape name "${name}". Use only letters, digits, hyphens, underscores.`
+    );
+  }
   const id = name ?? `shape_${nextId++}`;
   if (shapes.has(id) && !name) {
     // Auto-generated collision — bump
@@ -50,12 +55,13 @@ export function get(id: string): ShapeEntry {
   return entry;
 }
 
-/** Remove a shape from the registry. */
+/** Remove a shape and its cached mesh from the registry. */
 export function remove(id: string): void {
   if (!shapes.has(id)) {
     throw new Error(`Shape "${id}" not found — cannot delete.`);
   }
   shapes.delete(id);
+  meshCache.delete(id);
 }
 
 /** Check if a shape exists. */

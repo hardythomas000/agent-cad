@@ -414,7 +414,8 @@ export function registerTools(server: McpServer): void {
       // Write to safe output directory
       const exportDir = path.join(process.env.TMPDIR ?? '/tmp', 'agent-cad');
       fs.mkdirSync(exportDir, { recursive: true });
-      const filename = `${entry.id}-${Date.now()}.stl`;
+      const safeId = entry.id.replace(/[^a-zA-Z0-9_-]/g, '_');
+      const filename = `${safeId}-${Date.now()}.stl`;
       const filePath = path.join(exportDir, filename);
       fs.writeFileSync(filePath, Buffer.from(stlBuffer));
 
