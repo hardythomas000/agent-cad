@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { box, sphere, cylinder } from '../src/index.js';
+import { box, sphere, cylinder, union, intersect } from '../src/index.js';
 
 const EPSILON = 1e-5;
 
@@ -99,6 +99,44 @@ describe('Smooth Subtract (fillet)', () => {
     const dSmooth = smooth.evaluate(edgePoint);
     // They should differ near the edge
     expect(dSharp).not.toBe(dSmooth);
+  });
+});
+
+describe('SmoothIntersect', () => {
+  const a = sphere(10);
+  const b = sphere(10).translate(8, 0, 0);
+
+  it('approaches sharp intersect far from blend', () => {
+    const sharp = a.intersect(b);
+    const smooth = a.smoothIntersect(b, 2);
+    // At origin, dA=-10 dB=-2, |diff|=8 >> k=2, so smooth == sharp exactly
+    near(smooth.evaluate([0, 0, 0]), sharp.evaluate([0, 0, 0]), 0.01);
+  });
+
+  it('blends differently than sharp intersect near the edge', () => {
+    const sharp = a.intersect(b);
+    const smooth = a.smoothIntersect(b, 5);
+    const edgePoint: [number, number, number] = [4, 8, 0];
+    const dSharp = sharp.evaluate(edgePoint);
+    const dSmooth = smooth.evaluate(edgePoint);
+    expect(dSmooth).not.toBe(dSharp);
+  });
+
+  it('only contains the overlap region', () => {
+    const smooth = a.smoothIntersect(b, 2);
+    expect(smooth.contains([4, 0, 0])).toBe(true);
+    expect(smooth.contains([-9, 0, 0])).toBe(false);
+    expect(smooth.contains([17, 0, 0])).toBe(false);
+  });
+});
+
+describe('Boolean guards', () => {
+  it('union() throws on empty args', () => {
+    expect(() => union()).toThrow('union requires at least one shape');
+  });
+
+  it('intersect() throws on empty args', () => {
+    expect(() => intersect()).toThrow('intersect requires at least one shape');
   });
 });
 

@@ -52,23 +52,23 @@ describe('Root finding (findSurface)', () => {
   describe('Drop cutter', () => {
     const b = box(100, 60, 30); // top at z=15
 
-    it('finds top surface from above', () => {
-      const t = b.dropCutter(0, 0, 50, -50);
-      expect(t).not.toBeNull();
-      // From z=50, the surface is at z=15, so t = 50-15 = 35
-      expect(Math.abs(t! - 35)).toBeLessThan(1e-5);
+    it('returns Z coordinate of surface contact', () => {
+      const z = b.dropCutter(0, 0, 50, -50);
+      expect(z).not.toBeNull();
+      // Surface is at z=15
+      expect(Math.abs(z! - 15)).toBeLessThan(1e-5);
     });
 
     it('finds surface at off-center position', () => {
-      const t = b.dropCutter(20, 10, 50, -50);
-      expect(t).not.toBeNull();
-      expect(Math.abs(t! - 35)).toBeLessThan(1e-5); // still z=15
+      const z = b.dropCutter(20, 10, 50, -50);
+      expect(z).not.toBeNull();
+      expect(Math.abs(z! - 15)).toBeLessThan(1e-5); // still z=15
     });
 
     it('returns null outside XY footprint', () => {
-      const t = b.dropCutter(60, 0, 50, -50);
+      const z = b.dropCutter(60, 0, 50, -50);
       // x=60 is outside the box (±50 in X)
-      expect(t).toBeNull();
+      expect(z).toBeNull();
     });
   });
 
@@ -91,6 +91,13 @@ describe('Root finding (findSurface)', () => {
       expect(t).not.toBeNull();
       expect(Math.abs(t! - 100)).toBeLessThan(1e-10);
     });
+  });
+});
+
+describe('Input guards', () => {
+  it('findSurface throws on zero direction', () => {
+    const s = sphere(10);
+    expect(() => s.findSurface([0, 0, 0], [0, 0, 0], 0, 10)).toThrow('direction must be non-zero');
   });
 });
 

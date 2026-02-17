@@ -106,6 +106,42 @@ describe('Round', () => {
   });
 });
 
+describe('Elongate', () => {
+  const s = sphere(10).elongate(20, 0, 0); // stretch sphere 20mm in X
+
+  it('extends shape along the axis', () => {
+    expect(s.contains([0, 0, 0])).toBe(true);
+    expect(s.contains([15, 0, 0])).toBe(true);      // inside elongated region
+    expect(s.contains([0, 0, 8])).toBe(true);
+    expect(s.contains([25, 0, 0])).toBe(false);
+  });
+
+  it('preserves cross-section in Z', () => {
+    // At center, cross-section is still a sphere of r=10
+    near(s.evaluate([0, 0, 10]), 0);
+    // Within elongation range, Z cross-section remains r=10
+    near(s.evaluate([5, 0, 10]), 0);
+  });
+
+  it('returns correct SDF at center', () => {
+    near(s.evaluate([0, 0, 0]), -10);
+  });
+
+  it('is positive outside', () => {
+    expect(s.evaluate([0, 0, 15])).toBeGreaterThan(0);
+  });
+});
+
+describe('Scale guards', () => {
+  it('throws on zero scale', () => {
+    expect(() => sphere(10).scale(0)).toThrow('Scale factor cannot be zero');
+  });
+
+  it('throws on negative scale', () => {
+    expect(() => sphere(10).scale(-1)).toThrow('Scale factor must be positive');
+  });
+});
+
 describe('Compound transforms', () => {
   it('translate then rotate', () => {
     const part = sphere(5).translate(20, 0, 0).rotateZ(90);

@@ -44,6 +44,7 @@ export function plane(normal: Vec3, offset: number): SDF {
 // ─── Standalone boolean constructors ─────────────────────────
 
 export function union(...shapes: SDF[]): SDF {
+  if (shapes.length === 0) throw new Error('union requires at least one shape');
   return shapes.reduce((a, b) => a.union(b));
 }
 
@@ -52,5 +53,6 @@ export function subtract(from: SDF, ...cutters: SDF[]): SDF {
 }
 
 export function intersect(...shapes: SDF[]): SDF {
+  if (shapes.length === 0) throw new Error('intersect requires at least one shape');
   return shapes.reduce((a, b) => a.intersect(b));
 }

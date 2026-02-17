@@ -1,7 +1,7 @@
 // Public API
 export { SDF } from './sdf.js';
 export type { SDFReadback } from './sdf.js';
-export type { Vec3 } from './vec3.js';
+export type { Vec3, BoundingBox } from './vec3.js';
 export { vec3 } from './vec3.js';
 
 // Primitives

@@ -1,6 +1,9 @@
 /** Minimal 3D vector — plain tuple for speed, helpers for clarity. */
 export type Vec3 = [number, number, number];
 
+/** Axis-aligned bounding box. */
+export interface BoundingBox { min: Vec3; max: Vec3; }
+
 export function vec3(x: number, y: number, z: number): Vec3 {
   return [x, y, z];
 }

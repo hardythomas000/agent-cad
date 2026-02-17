@@ -140,6 +140,12 @@ describe('Plane', () => {
   });
 });
 
+describe('Plane guards', () => {
+  it('throws on zero-length normal', () => {
+    expect(() => plane([0, 0, 0], 10)).toThrow('Plane normal must be non-zero');
+  });
+});
+
 describe('Cone', () => {
   const c = cone(10, 20); // r=10 at base, h=20, tip at origin
 
