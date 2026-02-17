@@ -268,6 +268,16 @@ program.post("fanuc", output="part_001.nc")
 
 An LLM can generate this. A machinist can read this. The kernel handles everything between.
 
+### Design Principle 8: Token-Native Geometry
+
+The architecture paper (see `docs/token-native-geometry-architecture.md`) establishes the theoretical foundation: LLM hidden layers organize information on high-dimensional manifolds where intrinsic dimension collapses at mid-layers — this is where geometric reasoning happens. Our SDF kernel is the computational substrate for this:
+
+- **SDF is the right representation** — the paper positions SDF/neural occupancy as the differentiable, agent-native alternative to Parasolid/ACIS. Our kernel IS this.
+- **MCP is the token-efficient architecture** — the paper warns against "context bloat" from loading raw geometry into the context window. Our MCP server keeps shapes in a registry and returns compact readback summaries. The LLM never sees raw coordinates.
+- **B-Rep tokenization is the bridge to industry** — frameworks like BrepARG and DTGBrepGen show how to serialize B-Rep for transformers. Our export path (SDF→mesh→B-Rep) will need this.
+- **Equivariance matters** — EquiCAD shows SO(3)/O(3)-equivariant networks guarantee orientation-invariant features. Our kernel handles this via composable transform nodes, but future ML training on SDF operations would benefit from explicit equivariant encoding.
+- **Topology-geometry decoupling** — DTGBrepGen generates valid topology first, then populates geometry. This validates our "SDF for modeling, B-Rep only at export" architecture.
+
 ### Research Validation (February 2026)
 
 These principles aren't theoretical — they're backed by emerging research:
@@ -315,6 +325,7 @@ These principles aren't theoretical — they're backed by emerging research:
 - [ElectricSQL blog](https://electric-sql.com/blog/2026/01/20/from-science-fiction-to-reality-you-can-build-difficult-things-now) — LLM + kernel from scratch, pivoted to OCCT
 - [STEP-LLM](https://arxiv.org/html/2601.12641v1) — generating STEP files directly from LLMs
 - [GeoGramBench](https://arxiv.org/html/2505.17653v1) — LLMs: >80% local primitives, <50% global integration
+- Token-Native Geometry Architecture (internal) — custom kernels, B-Rep tokenization, agent-native CAM, equivariance, MCP token efficiency. See `docs/token-native-geometry-architecture.md`
 
 ## The Killer Features (Things That Don't Exist)
 
@@ -327,60 +338,84 @@ These principles aren't theoretical — they're backed by emerging research:
 
 ## Phased Roadmap
 
-### Phase 0: Foundation (Current)
+### Phase 0: Foundation ✅
 - [x] Research landscape
 - [x] Define aesthetic
 - [x] Vision document
-- [ ] Set up monorepo (TypeScript + Rust/WASM)
-- [ ] Basic Three.js viewer with our theme
+- [x] Token-native geometry theory paper (`docs/token-native-geometry-architecture.md`)
+- [x] Set up monorepo (npm workspaces, TypeScript)
 
 ### Phase 1: The Viewer
-- Load and display STEP files (via occt-import-js, already proven in our viewer work)
-- Interactive 3D view with our aesthetic
-- Code editor pane (Monaco or CodeMirror) with our colour theme
-- Split-pane: code left, 3D right
+- [ ] Load and display STEP files (via occt-import-js, already proven in our viewer work)
+- [ ] Interactive 3D view with our aesthetic
+- [ ] Code editor pane (Monaco or CodeMirror) with our colour theme
+- [ ] Split-pane: code left, 3D right
 
-### Phase 2: The Code Layer
-- TypeScript geometry API (fluent, chainable)
-- Basic primitives: box, cylinder, sphere, plane
-- SDF evaluation (Fidget compiled to WASM)
-- SDF booleans (union, subtract, intersect) — the shadow graph operations
-- Mesh extraction (marching cubes / Manifold level sets)
-- Display SDF results in viewer
+### Phase 2: SDF Kernel ✅
+- [x] TypeScript geometry API (fluent, chainable) — `@agent-cad/sdf-kernel`
+- [x] Primitives: box, cylinder, sphere, cone, torus, plane (6)
+- [x] SDF booleans: union, subtract, intersect + smooth variants (6)
+- [x] Transforms: translate, rotate, scale, mirror (4)
+- [x] Modifiers: shell, round, elongate (3)
+- [x] Sphere tracing + bisection root finding
+- [x] Drop cutter (CAM primitive — Z-contact search)
+- [x] Structured readback (name, bounds, size, center)
+- [x] 82 tests passing
+- [ ] Mesh extraction (marching cubes)
+- [ ] Display SDF results in viewer
 
-### Phase 3: B-Rep Bridge
-- OpenCascade.js integration (custom build, minimal)
-- STEP import → B-Rep → display
-- SDF → mesh → NURBS fitting for critical faces
-- STEP export from internal representation
+### Phase 3: Agent Layer ✅
+- [x] MCP server exposing 21 tools (`@agent-cad/mcp-server`)
+- [x] In-memory shape registry with auto/named IDs
+- [x] Every tool returns structured readback (the "kernel talks back" principle)
+- [x] Registered in Claude Code as MCP server
+- [ ] Natural language → geometry workflow testing
+- [ ] Agent loop: describe → generate → execute → verify → iterate
+- [ ] Setup sheet generation from machining context
 
-### Phase 4: 2D Toolpath Engine
-- Clipper2-WASM for 2D contour offset
-- Pocket clearing (zigzag, contour parallel)
-- Profile cutting (inside/outside)
-- Drill cycle generation
-- G-code output (Fanuc dialect first)
-- 2D toolpath visualization in viewer
+### Phase 4: Mesh Export & Visualization
+- [ ] Marching cubes (SDF → triangle mesh)
+- [ ] STL export
+- [ ] Three.js viewer integration (display SDF-derived meshes)
+- [ ] Agent-requested screenshot captures with face/edge annotations
 
-### Phase 5: 3D Toolpath Engine
-- OpenCAMlib integration (WASM)
-- Surface finishing (waterline, raster, flowline)
-- Rest machining (stock model tracking)
-- Toolpath simulation (stock removal visualization)
+### Phase 5: B-Rep Bridge
+- [ ] OpenCascade.js integration (custom build, minimal)
+- [ ] STEP import → B-Rep → display
+- [ ] SDF → mesh → NURBS fitting for critical faces
+- [ ] STEP export from internal representation
+- [ ] B-Rep tokenization path (informed by BrepARG/DTGBrepGen research)
 
-### Phase 6: Agent Layer
-- MCP server exposing all operations
-- Natural language → TypeScript API code generation
-- Agent loop: describe → generate → execute → verify → iterate
-- Setup sheet generation from machining context
+### Phase 6: Toolpath Engine
+- [ ] `generate_toolpath` MCP tool — drop_cutter in grid pattern → Z-map
+- [ ] Clipper2-WASM for 2D contour offset
+- [ ] Pocket clearing (zigzag, contour parallel)
+- [ ] Profile cutting (inside/outside)
+- [ ] Drill cycle generation
+- [ ] G-code output (Fanuc dialect first)
+- [ ] Toolpath visualization in viewer
+- [ ] Tokenized toolpath representation (compact, agent-readable)
 
-### Phase 7: Advanced
-- 5-axis toolpath generation
-- HSM/trochoidal clearing algorithms
-- Variable-radius fillets in SDF
-- Multi-setup planning
-- Post processor framework (machine-specific dialects)
-- Institutional knowledge capture
+### Phase 7: 3D Toolpath & Surface Finishing
+- [ ] OpenCAMlib integration (WASM) or custom surface algorithms
+- [ ] Surface finishing (waterline, raster, flowline)
+- [ ] Rest machining (stock model tracking)
+- [ ] Toolpath simulation (stock removal visualization)
+
+### Phase 8: Advanced Manufacturing
+- [ ] 5-axis toolpath generation
+- [ ] HSM/trochoidal clearing algorithms
+- [ ] Variable-radius fillets in SDF
+- [ ] Multi-setup planning
+- [ ] Post processor framework (machine-specific dialects)
+- [ ] Institutional knowledge capture
+
+### Phase 9: Spatial Intelligence (Informed by Token-Native Geometry Paper)
+- [ ] SO(3)/O(3)-equivariant feature encoding for SDF operations
+- [ ] Spectral-preserving tokenization (Heat Kernel Signatures on meshes)
+- [ ] Multi-modal alignment (language + vision + 3D geometry tokens)
+- [ ] Neurosymbolic constraint discovery (parametric CAD from intent)
+- [ ] Generative world model — editable, persistent 4D environments
 
 ## Prior Art (Closest Projects)
 
@@ -410,4 +445,5 @@ These principles aren't theoretical — they're backed by emerging research:
 ---
 
 *Created 2026-02-17 by Hardy Thomas + Claude*
+*Updated 2026-02-17 — Phase 2 (SDF kernel) and Phase 3 (agent layer) complete. Theory grounded in token-native geometry research.*
 *For the machinist who wants to build the machine beneath the machine.*
