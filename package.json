@@ -1,0 +1,5 @@
+{
+  "name": "agent-cad",
+  "private": true,
+  "workspaces": ["packages/*"]
+}
