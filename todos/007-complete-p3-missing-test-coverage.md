@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "007"
 tags: [code-review, quality]
@@ -25,3 +25,4 @@ The 13 tests are good but miss several important scenarios.
 | Date | Action | Outcome |
 |------|--------|---------|
 | 2026-02-17 | Identified by Code Quality agent | P3 finding |
+| 2026-02-18 | Added 6 tests: rotated box, scaled sphere, smooth union, tiny shape, NaN safety, winding order | Complete |

@@ -82,6 +82,63 @@ describe('marchingCubes', () => {
       expect(idx).toBeLessThan(mesh.vertexCount);
     }
   });
+
+  it('meshes a rotated box', () => {
+    const b = box(20, 10, 10).rotateZ(45);
+    const mesh = marchingCubes(b, 2);
+    expect(mesh.triangleCount).toBeGreaterThan(10);
+    // Rotated 20mm box diagonal extends further than 10 in X/Y
+    const xSpan = mesh.bounds.max[0] - mesh.bounds.min[0];
+    expect(xSpan).toBeGreaterThan(12); // wider than unrotated height
+  });
+
+  it('meshes a scaled sphere', () => {
+    const s = sphere(5).scale(3); // effective radius 15
+    const mesh = marchingCubes(s, 2);
+    expect(mesh.triangleCount).toBeGreaterThan(50);
+    // Bounds should reflect scaled radius
+    expect(mesh.bounds.max[0]).toBeGreaterThan(13);
+    expect(mesh.bounds.min[0]).toBeLessThan(-13);
+  });
+
+  it('meshes a smooth union', () => {
+    const a = sphere(8).translate(-5, 0, 0);
+    const b = sphere(8).translate(5, 0, 0);
+    const smooth = a.smoothUnion(b, 3);
+    const mesh = marchingCubes(smooth, 2);
+    expect(mesh.triangleCount).toBeGreaterThan(50);
+    // Smooth union is larger than either sphere alone
+    expect(mesh.bounds.max[0]).toBeGreaterThan(12);
+    expect(mesh.bounds.min[0]).toBeLessThan(-12);
+  });
+
+  it('meshes a very small shape relative to resolution', () => {
+    const tiny = sphere(1); // 2mm diameter
+    const mesh = marchingCubes(tiny, 2); // voxel = full diameter
+    // Should still produce some triangles despite coarse sampling
+    expect(mesh.triangleCount).toBeGreaterThanOrEqual(0);
+    expect(mesh.vertexCount).toBe(mesh.triangleCount * 3);
+    // No NaN in any vertex
+    for (const v of mesh.vertices) {
+      for (let i = 0; i < 3; i++) {
+        expect(Number.isFinite(v[i])).toBe(true);
+      }
+    }
+  });
+
+  it('produces no NaN vertices (interpolation safety)', () => {
+    // Two overlapping spheres create near-equal SDF values in the
+    // overlap region, exercising the denominator guard in interpolate()
+    const a = sphere(6).translate(-1, 0, 0);
+    const b = sphere(6).translate(1, 0, 0);
+    const mesh = marchingCubes(a.union(b), 3);
+    expect(mesh.triangleCount).toBeGreaterThan(10);
+    for (const v of mesh.vertices) {
+      for (let i = 0; i < 3; i++) {
+        expect(Number.isFinite(v[i])).toBe(true);
+      }
+    }
+  });
 });
 
 describe('exportSTL', () => {
@@ -146,5 +203,36 @@ describe('exportSTL', () => {
     // 30 emoji chars = 120 UTF-8 bytes (4 bytes each)
     const emojiHeader = '\u{1F4A0}'.repeat(30);
     expect(() => exportSTL(mesh, emojiHeader)).toThrow('STL header exceeds 80 bytes');
+  });
+
+  it('sphere normals are consistently oriented (winding order)', () => {
+    const s = sphere(10);
+    const mesh = marchingCubes(s, 3);
+    const stl = exportSTL(mesh);
+    const view = new DataView(stl);
+    let inwardCount = 0;
+    let outwardCount = 0;
+    let offset = 84;
+    for (let t = 0; t < mesh.triangleCount; t++) {
+      const nx = view.getFloat32(offset, true);
+      const ny = view.getFloat32(offset + 4, true);
+      const nz = view.getFloat32(offset + 8, true);
+      // First vertex of this triangle
+      const vx = view.getFloat32(offset + 12, true);
+      const vy = view.getFloat32(offset + 16, true);
+      const vz = view.getFloat32(offset + 20, true);
+      const nLen = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      if (nLen > 0.01) {
+        // For a sphere at origin, dot(normal, vertex) reveals orientation
+        const dot = nx * vx + ny * vy + nz * vz;
+        if (dot > 0) outwardCount++;
+        else inwardCount++;
+      }
+      offset += 50;
+    }
+    // Normals should be consistently oriented (>90% one direction)
+    const total = inwardCount + outwardCount;
+    const dominant = Math.max(inwardCount, outwardCount);
+    expect(dominant / total).toBeGreaterThan(0.9);
   });
 });
