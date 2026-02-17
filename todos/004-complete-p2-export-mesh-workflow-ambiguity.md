@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "004"
 tags: [code-review, agent-native]
@@ -38,3 +38,4 @@ Change to: "Export as STL. Uses cached mesh if available, or auto-computes at gi
 | Date | Action | Outcome |
 |------|--------|---------|
 | 2026-02-17 | Identified by Agent-Native Reviewer | P2 finding |
+| 2026-02-18 | Fixed: export_mesh now throws if no cached mesh, removed auto-compute fallback | Complete |

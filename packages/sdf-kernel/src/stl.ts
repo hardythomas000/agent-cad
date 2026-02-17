@@ -10,14 +10,23 @@ import { sub, cross, normalize } from './vec3.js';
 import type { TriangleMesh } from './mesh.js';
 
 export function exportSTL(mesh: TriangleMesh, header = 'agent-cad'): ArrayBuffer {
+  if (mesh.triangleCount === 0) {
+    throw new Error('Cannot export empty mesh (0 triangles)');
+  }
+  const enc = new TextEncoder();
+  const headerBytes = enc.encode(header);
+  if (headerBytes.length > 80) {
+    throw new Error(
+      `STL header exceeds 80 bytes (got ${headerBytes.length}). Shorten the header string.`
+    );
+  }
+
   const { vertices, indices, triangleCount } = mesh;
   const size = 84 + triangleCount * 50;
   const buffer = new ArrayBuffer(size);
   const view = new DataView(buffer);
 
   // Header (80 bytes, pad with zeros)
-  const enc = new TextEncoder();
-  const headerBytes = enc.encode(header.slice(0, 80));
   for (let i = 0; i < headerBytes.length; i++) {
     view.setUint8(i, headerBytes[i]);
   }

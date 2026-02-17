@@ -128,4 +128,23 @@ describe('exportSTL', () => {
     const headerBytes = new Uint8Array(stl, 0, 11);
     expect(dec.decode(headerBytes)).toBe('test-header');
   });
+
+  it('rejects empty mesh', () => {
+    const emptyMesh = marchingCubes(sphere(5), 1, { min: [100, 100, 100], max: [110, 110, 110] }, 0);
+    expect(emptyMesh.triangleCount).toBe(0);
+    expect(() => exportSTL(emptyMesh)).toThrow('Cannot export empty mesh');
+  });
+
+  it('rejects header exceeding 80 bytes', () => {
+    const mesh = marchingCubes(sphere(5), 3);
+    const longHeader = 'A'.repeat(81);
+    expect(() => exportSTL(mesh, longHeader)).toThrow('STL header exceeds 80 bytes');
+  });
+
+  it('rejects multibyte header exceeding 80 bytes', () => {
+    const mesh = marchingCubes(sphere(5), 3);
+    // 30 emoji chars = 120 UTF-8 bytes (4 bytes each)
+    const emojiHeader = '\u{1F4A0}'.repeat(30);
+    expect(() => exportSTL(mesh, emojiHeader)).toThrow('STL header exceeds 80 bytes');
+  });
 });

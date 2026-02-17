@@ -397,17 +397,17 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     'export_mesh',
-    'Export a shape as binary STL file. Call compute_mesh first to control resolution.',
+    'Export a shape as binary STL file. You must call compute_mesh first — it will throw if no cached mesh exists.',
     {
       shape: z.string().describe('ID of shape to export'),
-      resolution: z.number().min(0.1).max(10).default(2).describe('Voxel size if shape needs meshing (0.1-10, default 2)'),
     },
-    async ({ shape, resolution }) => {
+    async ({ shape }) => {
       const entry = registry.get(shape);
-      // Use cached mesh or compute fresh
-      let mesh = registry.getMesh(entry.id);
+      const mesh = registry.getMesh(entry.id);
       if (!mesh) {
-        mesh = marchingCubes(entry.shape, resolution);
+        throw new Error(
+          `No mesh cached for "${entry.id}". Call compute_mesh first to generate the mesh.`
+        );
       }
       const stlBuffer = exportSTL(mesh);
 
