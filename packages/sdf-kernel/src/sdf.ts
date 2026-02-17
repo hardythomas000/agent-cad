@@ -266,42 +266,39 @@ export class Cylinder extends SDF {
 }
 
 export class Cone extends SDF {
-  private sinA: number;
-  private cosA: number;
   constructor(readonly radius: number, readonly height: number) {
     super();
-    const a = Math.atan2(radius, height);
-    this.sinA = Math.sin(a);
-    this.cosA = Math.cos(a);
   }
   get name() { return `cone(r=${this.radius}, h=${this.height})`; }
   evaluate(p: Vec3): number {
-    // Cone tip at origin, opens downward along -Z, base at z=-height
+    // Capped cone: tip at origin, opens downward along -Z, base at z=-height.
+    // Based on Quilez's sdCappedCone using closest-point-on-boundary.
+    const r = this.radius;
+    const h = this.height;
     const q: [number, number] = [len2d(p[0], p[1]), p[2]];
-    // Signed distance to cone surface
-    const tip: [number, number] = [0, 0];
-    const base: [number, number] = [this.radius, -this.height];
-    // Project onto cone line
-    const e: [number, number] = [base[0] - tip[0], base[1] - tip[1]];
-    const w: [number, number] = [q[0] - tip[0], q[1] - tip[1]];
-    const d1 = w[1] * e[0] - w[0] * e[1];
-    const d2 = w[0] * e[0] + w[1] * e[1];
-    const le = len2d(e[0], e[1]);
-    const t = Math.max(0, Math.min(1, d2 / (le * le)));
-    const proj: [number, number] = [tip[0] + t * e[0], tip[1] + t * e[1]];
-    const dSurf = len2d(q[0] - proj[0], q[1] - proj[1]);
-    // Cap at base
-    const dCap = Math.abs(q[1] + this.height) - 0;
-    const insideCone = d1 <= 0 && q[1] >= -this.height && q[1] <= 0;
-    const sign = insideCone ? -1 : 1;
-    if (q[1] > 0) return length([q[0], q[1], 0]); // above tip
-    if (q[1] < -this.height) {
-      // below base
-      const dR = q[0] - this.radius;
-      if (dR > 0) return len2d(dR, q[1] + this.height);
-      return -(q[1] + this.height);
-    }
-    return sign * dSurf;
+
+    // Edge vector from tip (0,0) to base rim (r, -h)
+    const ex = r, ey = -h;
+    const elen2 = ex * ex + ey * ey;
+
+    // Project q onto the slant edge (clamped to [0,1])
+    const d2 = q[0] * ex + q[1] * ey;
+    const t = Math.max(0, Math.min(1, d2 / elen2));
+    const projX = t * ex;
+    const projY = t * ey;
+    const dSlant = len2d(q[0] - projX, q[1] - projY);
+
+    // Distance to base cap disk (clamp radial to [0, r])
+    const capR = Math.min(q[0], r);
+    const dCap = len2d(capR - q[0], q[1] + h);
+
+    const dist = Math.min(dSlant, dCap);
+
+    // Sign: inside if below the slant line AND above the base
+    // Cross product of edge with (q - tip): positive = outside slant
+    const cross = q[1] * ex - q[0] * ey; // w x e
+    const insideCone = cross <= 0 && q[1] >= -h && q[1] <= 0;
+    return insideCone ? -dist : dist;
   }
   bounds() {
     const r = this.radius;
@@ -342,6 +339,13 @@ export class Union extends SDF {
   evaluate(p: Vec3): number {
     return Math.min(this.a.evaluate(p), this.b.evaluate(p));
   }
+  bounds() {
+    const ba = this.a.bounds(), bb = this.b.bounds();
+    return {
+      min: [Math.min(ba.min[0], bb.min[0]), Math.min(ba.min[1], bb.min[1]), Math.min(ba.min[2], bb.min[2])] as Vec3,
+      max: [Math.max(ba.max[0], bb.max[0]), Math.max(ba.max[1], bb.max[1]), Math.max(ba.max[2], bb.max[2])] as Vec3,
+    };
+  }
 }
 
 export class Subtract extends SDF {
@@ -350,6 +354,9 @@ export class Subtract extends SDF {
   evaluate(p: Vec3): number {
     return Math.max(this.a.evaluate(p), -this.b.evaluate(p));
   }
+  bounds() {
+    return this.a.bounds(); // Conservative: result fits within A
+  }
 }
 
 export class Intersect extends SDF {
@@ -357,6 +364,13 @@ export class Intersect extends SDF {
   get name() { return `intersect(${this.a.name}, ${this.b.name})`; }
   evaluate(p: Vec3): number {
     return Math.max(this.a.evaluate(p), this.b.evaluate(p));
+  }
+  bounds() {
+    const ba = this.a.bounds(), bb = this.b.bounds();
+    return {
+      min: [Math.max(ba.min[0], bb.min[0]), Math.max(ba.min[1], bb.min[1]), Math.max(ba.min[2], bb.min[2])] as Vec3,
+      max: [Math.min(ba.max[0], bb.max[0]), Math.min(ba.max[1], bb.max[1]), Math.min(ba.max[2], bb.max[2])] as Vec3,
+    };
   }
 }
 
@@ -377,6 +391,14 @@ export class SmoothUnion extends SDF {
   evaluate(p: Vec3): number {
     return smin(this.a.evaluate(p), this.b.evaluate(p), this.k);
   }
+  bounds() {
+    const ba = this.a.bounds(), bb = this.b.bounds();
+    const pad = this.k / 2; // smooth union expands slightly
+    return {
+      min: [Math.min(ba.min[0], bb.min[0]) - pad, Math.min(ba.min[1], bb.min[1]) - pad, Math.min(ba.min[2], bb.min[2]) - pad] as Vec3,
+      max: [Math.max(ba.max[0], bb.max[0]) + pad, Math.max(ba.max[1], bb.max[1]) + pad, Math.max(ba.max[2], bb.max[2]) + pad] as Vec3,
+    };
+  }
 }
 
 export class SmoothSubtract extends SDF {
@@ -385,6 +407,9 @@ export class SmoothSubtract extends SDF {
   evaluate(p: Vec3): number {
     return smax(this.a.evaluate(p), -this.b.evaluate(p), this.k);
   }
+  bounds() {
+    return this.a.bounds();
+  }
 }
 
 export class SmoothIntersect extends SDF {
@@ -392,6 +417,13 @@ export class SmoothIntersect extends SDF {
   get name() { return `smoothIntersect(${this.a.name}, ${this.b.name}, k=${this.k})`; }
   evaluate(p: Vec3): number {
     return smax(this.a.evaluate(p), this.b.evaluate(p), this.k);
+  }
+  bounds() {
+    const ba = this.a.bounds(), bb = this.b.bounds();
+    return {
+      min: [Math.max(ba.min[0], bb.min[0]), Math.max(ba.min[1], bb.min[1]), Math.max(ba.min[2], bb.min[2])] as Vec3,
+      max: [Math.min(ba.max[0], bb.max[0]), Math.min(ba.max[1], bb.max[1]), Math.min(ba.max[2], bb.max[2])] as Vec3,
+    };
   }
 }
 
@@ -413,14 +445,27 @@ export class Translate extends SDF {
 }
 
 export class RotateAxis extends SDF {
-  private rad: number;
+  private readonly c: number;  // cos(-angle)
+  private readonly s: number;  // sin(-angle)
   constructor(readonly child: SDF, readonly axis: 'x' | 'y' | 'z', readonly deg: number) {
     super();
-    this.rad = deg * Math.PI / 180;
+    const rad = deg * Math.PI / 180;
+    this.c = Math.cos(-rad);
+    this.s = Math.sin(-rad);
   }
   get name() { return `${this.child.name}.rotate${this.axis.toUpperCase()}(${this.deg})`; }
+  /** Rotate point by the FORWARD rotation (inverse of the evaluate transform). */
+  private rotateForward(p: Vec3): Vec3 {
+    // Forward rotation uses cos(+angle), sin(+angle) = c, -s (since this.c/s are for -angle)
+    const c = this.c, s = -this.s;
+    switch (this.axis) {
+      case 'x': return [p[0], c * p[1] - s * p[2], s * p[1] + c * p[2]];
+      case 'y': return [c * p[0] + s * p[2], p[1], -s * p[0] + c * p[2]];
+      case 'z': return [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]];
+    }
+  }
   evaluate(p: Vec3): number {
-    const c = Math.cos(-this.rad), s = Math.sin(-this.rad);
+    const { c, s } = this;
     let rp: Vec3;
     switch (this.axis) {
       case 'x': rp = [p[0], c * p[1] - s * p[2], s * p[1] + c * p[2]]; break;
@@ -429,10 +474,32 @@ export class RotateAxis extends SDF {
     }
     return this.child.evaluate(rp);
   }
+  bounds() {
+    const cb = this.child.bounds();
+    // Rotate all 8 corners of child AABB, take new AABB
+    const corners: Vec3[] = [];
+    for (const x of [cb.min[0], cb.max[0]])
+      for (const y of [cb.min[1], cb.max[1]])
+        for (const z of [cb.min[2], cb.max[2]])
+          corners.push(this.rotateForward([x, y, z]));
+    const min: Vec3 = [Infinity, Infinity, Infinity];
+    const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+    for (const c of corners) {
+      for (let i = 0; i < 3; i++) {
+        if (c[i] < min[i]) min[i] = c[i];
+        if (c[i] > max[i]) max[i] = c[i];
+      }
+    }
+    return { min, max };
+  }
 }
 
 export class Scale extends SDF {
-  constructor(readonly child: SDF, readonly factor: number) { super(); }
+  constructor(readonly child: SDF, readonly factor: number) {
+    super();
+    if (factor === 0) throw new Error('Scale factor cannot be zero');
+    if (factor < 0) throw new Error('Scale factor must be positive');
+  }
   get name() { return `${this.child.name}.scale(${this.factor})`; }
   evaluate(p: Vec3): number {
     return this.child.evaluate(scale(p, 1 / this.factor)) * this.factor;
@@ -450,10 +517,23 @@ export class Mirror extends SDF {
   constructor(readonly child: SDF, readonly axis: 'x' | 'y' | 'z') { super(); }
   get name() { return `${this.child.name}.mirror(${this.axis})`; }
   evaluate(p: Vec3): number {
-    const mp: Vec3 = [...p];
-    const i = this.axis === 'x' ? 0 : this.axis === 'y' ? 1 : 2;
-    mp[i] = Math.abs(mp[i]);
+    const mp: Vec3 = this.axis === 'x'
+      ? [Math.abs(p[0]), p[1], p[2]]
+      : this.axis === 'y'
+        ? [p[0], Math.abs(p[1]), p[2]]
+        : [p[0], p[1], Math.abs(p[2])];
     return this.child.evaluate(mp);
+  }
+  bounds() {
+    const cb = this.child.bounds();
+    const i = this.axis === 'x' ? 0 : this.axis === 'y' ? 1 : 2;
+    const min: Vec3 = [...cb.min];
+    const max: Vec3 = [...cb.max];
+    // Mirror expands the axis to cover both +/- extents
+    const extent = Math.max(Math.abs(cb.min[i]), Math.abs(cb.max[i]));
+    min[i] = -extent;
+    max[i] = extent;
+    return { min, max };
   }
 }
 
