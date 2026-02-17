@@ -5,7 +5,7 @@
  * a structured readback so the LLM always knows the current state.
  */
 
-import type { SDF, SDFReadback } from '@agent-cad/sdf-kernel';
+import type { SDF, SDFReadback, TriangleMesh } from '@agent-cad/sdf-kernel';
 
 export interface ShapeEntry {
   id: string;
@@ -72,8 +72,23 @@ export function list(): ShapeResult[] {
   }));
 }
 
-/** Clear all shapes (for testing). */
+// ─── Mesh cache (separate from shape entries) ─────────────────
+
+const meshCache = new Map<string, TriangleMesh>();
+
+/** Cache a computed mesh for a shape. */
+export function cacheMesh(shapeId: string, mesh: TriangleMesh): void {
+  meshCache.set(shapeId, mesh);
+}
+
+/** Get cached mesh for a shape, or null. */
+export function getMesh(shapeId: string): TriangleMesh | null {
+  return meshCache.get(shapeId) ?? null;
+}
+
+/** Clear all shapes and mesh cache (for testing). */
 export function clear(): void {
   shapes.clear();
+  meshCache.clear();
   nextId = 1;
 }

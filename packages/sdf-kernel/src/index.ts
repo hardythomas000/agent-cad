@@ -10,6 +10,11 @@ export { box, sphere, cylinder, cone, torus, plane } from './api.js';
 // Standalone booleans
 export { union, subtract, intersect } from './api.js';
 
+// Mesh export
+export type { TriangleMesh } from './mesh.js';
+export { marchingCubes } from './marching-cubes.js';
+export { exportSTL } from './stl.js';
+
 // Node classes (for advanced use / type checking)
 export {
   Sphere, Box, Cylinder, Cone, Torus, Plane,

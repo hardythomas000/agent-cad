@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 21 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 23 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -9,8 +9,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   box, sphere, cylinder, cone, torus, plane,
-  type SDF,
+  marchingCubes, exportSTL,
+  type SDF, type TriangleMesh,
 } from '@agent-cad/sdf-kernel';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import * as registry from './registry.js';
 
 export function registerTools(server: McpServer): void {
@@ -353,6 +356,75 @@ export function registerTools(server: McpServer): void {
         query: { x, y, z_top, z_bottom },
         z_contact: zContact,
         hit: zContact !== null,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── Mesh Export (2) ──────────────────────────────────────────
+
+  server.tool(
+    'compute_mesh',
+    'Convert an SDF shape to a triangle mesh via marching cubes. Must be called before export_mesh.',
+    {
+      shape: z.string().describe('ID of shape to mesh'),
+      resolution: z.number().min(0.1).max(10).default(2).describe('Voxel size in mm (0.1-10, default 2). Smaller = finer detail, slower.'),
+      name: z.string().optional().describe('Optional name for the mesh result'),
+    },
+    async ({ shape, resolution, name }) => {
+      const entry = registry.get(shape);
+      const start = Date.now();
+      const mesh = marchingCubes(entry.shape, resolution);
+      const elapsed = Date.now() - start;
+      const readback = entry.shape.readback();
+      const result = {
+        shape_id: name ?? entry.id,
+        type: 'mesh',
+        readback,
+        mesh_info: {
+          vertex_count: mesh.vertexCount,
+          triangle_count: mesh.triangleCount,
+          resolution_mm: resolution,
+          computed_in_ms: elapsed,
+          bounds: mesh.bounds,
+        },
+      };
+      // Cache mesh on the registry entry
+      registry.cacheMesh(entry.id, mesh);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'export_mesh',
+    'Export a shape as binary STL file. Call compute_mesh first to control resolution.',
+    {
+      shape: z.string().describe('ID of shape to export'),
+      resolution: z.number().min(0.1).max(10).default(2).describe('Voxel size if shape needs meshing (0.1-10, default 2)'),
+    },
+    async ({ shape, resolution }) => {
+      const entry = registry.get(shape);
+      // Use cached mesh or compute fresh
+      let mesh = registry.getMesh(entry.id);
+      if (!mesh) {
+        mesh = marchingCubes(entry.shape, resolution);
+      }
+      const stlBuffer = exportSTL(mesh);
+
+      // Write to safe output directory
+      const exportDir = path.join(process.env.TMPDIR ?? '/tmp', 'agent-cad');
+      fs.mkdirSync(exportDir, { recursive: true });
+      const filename = `${entry.id}-${Date.now()}.stl`;
+      const filePath = path.join(exportDir, filename);
+      fs.writeFileSync(filePath, Buffer.from(stlBuffer));
+
+      const result = {
+        shape_id: entry.id,
+        type: 'stl_export',
+        file_path: filePath,
+        file_size_bytes: stlBuffer.byteLength,
+        triangle_count: mesh.triangleCount,
+        bounds: mesh.bounds,
       };
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
