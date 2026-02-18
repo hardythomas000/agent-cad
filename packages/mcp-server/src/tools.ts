@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 23 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 33 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -9,6 +9,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   box, sphere, cylinder, cone, torus, plane,
+  polygon, circle2d, rect2d, extrude, revolve,
   marchingCubes, exportSTL,
   generateRasterSurfacing, emitFanucGCode,
   type SDF, type TriangleMesh,
@@ -111,6 +112,110 @@ export function registerTools(server: McpServer): void {
       const shape = plane([normal_x, normal_y, normal_z], offset);
       const result = registry.create(shape, 'plane', name);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── 2D Profiles (3) ──────────────────────────────────────────
+
+  server.tool(
+    'create_polygon',
+    'Create a 2D polygon profile from vertices. Min 3 vertices. Handles convex and concave shapes. Use with extrude or revolve to create 3D geometry.',
+    {
+      vertices: z.array(z.tuple([z.number().finite(), z.number().finite()])).min(3).max(10000)
+        .describe('Array of [x, y] vertex coordinates in order (max 10,000 vertices)'),
+      name: z.string().optional().describe('Optional name for the profile'),
+    },
+    async ({ vertices, name }) => {
+      const profile = polygon(vertices);
+      const result = registry.createProfile(profile, 'polygon', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'create_circle_2d',
+    'Create a 2D circle profile centered at origin. Useful as a revolve cross-section.',
+    {
+      radius: z.number().positive().describe('Radius in mm'),
+      name: z.string().optional().describe('Optional name for the profile'),
+    },
+    async ({ radius, name }) => {
+      const profile = circle2d(radius);
+      const result = registry.createProfile(profile, 'circle2d', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'create_rect_2d',
+    'Create a 2D rectangle profile centered at origin.',
+    {
+      width: z.number().positive().describe('Width in mm'),
+      height: z.number().positive().describe('Height in mm'),
+      name: z.string().optional().describe('Optional name for the profile'),
+    },
+    async ({ width, height, name }) => {
+      const profile = rect2d(width, height);
+      const result = registry.createProfile(profile, 'rect2d', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── 2D → 3D (2) ─────────────────────────────────────────────
+
+  server.tool(
+    'extrude',
+    'Extrude a 2D profile along Z to create a 3D solid. Centered: extends from -height/2 to +height/2.',
+    {
+      profile: z.string().describe('ID of 2D profile to extrude'),
+      height: z.number().positive().describe('Extrusion height in mm'),
+      name: z.string().optional().describe('Optional name for the resulting 3D shape'),
+    },
+    async ({ profile: profileId, height, name }) => {
+      const entry = registry.getProfile(profileId);
+      const shape = extrude(entry.profile, height);
+      const result = registry.create(shape, 'extrude', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'revolve',
+    'Revolve a 2D profile around the Z axis to create a 3D solid. Offset = distance from axis to profile origin.',
+    {
+      profile: z.string().describe('ID of 2D profile to revolve'),
+      offset: z.number().min(0).default(0).describe('Distance from Z axis to profile origin in mm'),
+      name: z.string().optional().describe('Optional name for the resulting 3D shape'),
+    },
+    async ({ profile: profileId, offset, name }) => {
+      const entry = registry.getProfile(profileId);
+      const shape = revolve(entry.profile, offset);
+      const result = registry.create(shape, 'revolve', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── Profile Management (2) ─────────────────────────────────
+
+  server.tool(
+    'list_profiles',
+    'List all 2D profiles in the registry with their type and bounds.',
+    {},
+    async () => {
+      const profiles = registry.listProfiles();
+      return { content: [{ type: 'text', text: JSON.stringify({ count: profiles.length, profiles }) }] };
+    }
+  );
+
+  server.tool(
+    'delete_profile',
+    'Remove a 2D profile from the registry.',
+    {
+      profile: z.string().describe('ID of profile to delete'),
+    },
+    async ({ profile }) => {
+      registry.removeProfile(profile);
+      return { content: [{ type: 'text', text: JSON.stringify({ deleted: profile, remaining: registry.listProfiles().length }) }] };
     }
   );
 

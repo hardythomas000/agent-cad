@@ -10,6 +10,7 @@
  */
 
 import { Vec3, BoundingBox, vec3, add, sub, scale, dot, length, normalize, abs3, max3, len2d } from './vec3.js';
+import type { SDF2D } from './sdf2d.js';
 
 // ─── Base class ────────────────────────────────────────────────
 
@@ -589,5 +590,81 @@ export class Elongate extends SDF {
       p[2] - Math.max(-this.half[2], Math.min(p[2], this.half[2])),
     ];
     return this.child.evaluate(q);
+  }
+}
+
+// ─── 2D → 3D Bridge ────────────────────────────────────────────
+
+/**
+ * Linear extrude: create a 3D solid by extruding a 2D profile along Z.
+ * Centered: extends from -height/2 to +height/2.
+ *
+ * Uses Quilez's exact extrusion formula (not naive max) which correctly
+ * handles edge/corner distances where the profile meets the caps.
+ */
+export class Extrude extends SDF {
+  readonly kind = 'extrude' as const;
+  private readonly halfH: number;
+
+  constructor(readonly profile: SDF2D, readonly height: number) {
+    super();
+    if (height <= 0) throw new Error('Extrude height must be positive');
+    this.halfH = height / 2;
+  }
+
+  get name() { return `extrude(${this.profile.name}, h=${this.height})`; }
+
+  evaluate(p: Vec3): number {
+    const d = this.profile.evaluate(p[0], p[1]);
+    const wz = Math.abs(p[2]) - this.halfH;
+
+    // Quilez's exact extrusion: treats (d, wz) as a 2D point
+    // and computes distance to the quadrant where both <= 0
+    return Math.min(Math.max(d, wz), 0.0) +
+      Math.sqrt(Math.max(d, 0) ** 2 + Math.max(wz, 0) ** 2);
+  }
+
+  bounds(): BoundingBox {
+    const b2 = this.profile.bounds2d();
+    return {
+      min: vec3(b2.min[0], b2.min[1], -this.halfH),
+      max: vec3(b2.max[0], b2.max[1], this.halfH),
+    };
+  }
+}
+
+/**
+ * Revolve: create a 3D solid by revolving a 2D profile around the Z axis.
+ * The 2D profile is evaluated in (r - offset, z) space where r = sqrt(x²+y²).
+ *
+ * offset = 0: profile's X axis maps to radial distance.
+ * offset > 0: profile is displaced outward from the Z axis.
+ *
+ * Example: circle2d(10) revolved at offset=30 → torus(R=30, r=10)
+ */
+export class Revolve extends SDF {
+  readonly kind = 'revolve' as const;
+
+  constructor(readonly profile: SDF2D, readonly offset: number) {
+    super();
+    if (offset < 0) throw new Error('Revolve offset must be non-negative');
+  }
+
+  get name() { return `revolve(${this.profile.name}, offset=${this.offset})`; }
+
+  evaluate(p: Vec3): number {
+    const r = len2d(p[0], p[1]);
+    return this.profile.evaluate(r - this.offset, p[2]);
+  }
+
+  bounds(): BoundingBox {
+    const b2 = this.profile.bounds2d();
+    const rMin = this.offset + b2.min[0];
+    const rMax = this.offset + b2.max[0];
+    const maxR = Math.max(Math.abs(rMin), Math.abs(rMax));
+    return {
+      min: vec3(-maxR, -maxR, b2.min[1]),
+      max: vec3(maxR, maxR, b2.max[1]),
+    };
   }
 }

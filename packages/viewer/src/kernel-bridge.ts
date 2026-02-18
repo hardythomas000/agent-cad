@@ -7,8 +7,10 @@ import * as THREE from 'three';
 import {
   SDF,
   box, sphere, cylinder, cone, torus, plane,
+  polygon, circle2d, rect2d, extrude, revolve,
   union, subtract, intersect,
   marchingCubes,
+  type SDF2D,
   type TriangleMesh,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
@@ -82,6 +84,15 @@ export function executeCode(code: string): ExecuteResult {
     const _subtract = (...args: Parameters<typeof subtract>) => track(subtract(...args));
     const _intersect = (...args: Parameters<typeof intersect>) => track(intersect(...args));
 
+    // 2D profile constructors (passthrough — no 3D tracking needed)
+    const _polygon = (...args: Parameters<typeof polygon>) => polygon(...args);
+    const _circle2d = (...args: Parameters<typeof circle2d>) => circle2d(...args);
+    const _rect2d = (...args: Parameters<typeof rect2d>) => rect2d(...args);
+
+    // 2D → 3D bridge (these produce tracked 3D SDFs)
+    const _extrude = (profile: SDF2D, height: number) => track(extrude(profile, height));
+    const _revolve = (profile: SDF2D, offset?: number) => track(revolve(profile, offset));
+
     // computeMesh — explicit mesh generation
     const computeMesh = (shape: SDF, resolution = 2.0): TriangleMesh => {
       const m = marchingCubes(shape, resolution);
@@ -94,6 +105,7 @@ export function executeCode(code: string): ExecuteResult {
 
     const fn = new Function(
       'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
+      'polygon', 'circle2d', 'rect2d', 'extrude', 'revolve',
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
       code,
@@ -101,6 +113,7 @@ export function executeCode(code: string): ExecuteResult {
 
     fn(
       _box, _sphere, _cylinder, _cone, _torus, _plane,
+      _polygon, _circle2d, _rect2d, _extrude, _revolve,
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
     );

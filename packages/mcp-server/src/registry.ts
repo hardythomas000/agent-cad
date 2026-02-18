@@ -6,6 +6,7 @@
  */
 
 import type { SDF, SDFReadback, TriangleMesh, ToolDefinition, ToolpathResult } from '@agent-cad/sdf-kernel';
+import type { SDF2D, BoundingBox2D } from '@agent-cad/sdf-kernel';
 
 export interface ShapeEntry {
   id: string;
@@ -81,6 +82,68 @@ export function list(): ShapeResult[] {
   }));
 }
 
+// ─── 2D Profile registry ────────────────────────────────────────
+
+export interface ProfileEntry {
+  id: string;
+  profile: SDF2D;
+  type: string;
+}
+
+export interface ProfileResult {
+  profile_id: string;
+  type: string;
+  readback: { name: string; bounds: BoundingBox2D; size: [number, number]; center: [number, number] };
+}
+
+let nextProfileId = 1;
+const profiles = new Map<string, ProfileEntry>();
+
+/** Store a 2D profile and return its ID + readback. */
+export function createProfile(profile: SDF2D, type: string, name?: string): ProfileResult {
+  if (name !== undefined && !/^[a-zA-Z0-9_-]+$/.test(name)) {
+    throw new Error(`Invalid profile name "${name}". Use only letters, digits, hyphens, underscores.`);
+  }
+  const id = name ?? `profile_${nextProfileId++}`;
+  if (profiles.has(id) && !name) {
+    // Auto-generated collision — bump
+    return createProfile(profile, type);
+  }
+  profiles.set(id, { id, profile, type });
+  return {
+    profile_id: id,
+    type,
+    readback: profile.readback2d(),
+  };
+}
+
+/** Remove a 2D profile from the registry. */
+export function removeProfile(id: string): void {
+  if (!profiles.has(id)) {
+    throw new Error(`Profile "${id}" not found — cannot delete.`);
+  }
+  profiles.delete(id);
+}
+
+/** Retrieve a 2D profile or throw a clear error. */
+export function getProfile(id: string): ProfileEntry {
+  const entry = profiles.get(id);
+  if (!entry) {
+    const available = [...profiles.keys()];
+    throw new Error(`Profile "${id}" not found. Available profiles: [${available.join(', ')}]`);
+  }
+  return entry;
+}
+
+/** List all 2D profiles. */
+export function listProfiles(): ProfileResult[] {
+  return [...profiles.values()].map((entry) => ({
+    profile_id: entry.id,
+    type: entry.type,
+    readback: entry.profile.readback2d(),
+  }));
+}
+
 // ─── Mesh cache (separate from shape entries) ─────────────────
 
 const meshCache = new Map<string, TriangleMesh>();
@@ -99,9 +162,11 @@ export function getMesh(shapeId: string): TriangleMesh | null {
 export function clear(): void {
   shapes.clear();
   meshCache.clear();
+  profiles.clear();
   tools.clear();
   toolpaths.clear();
   nextId = 1;
+  nextProfileId = 1;
   nextToolId = 1;
   nextToolpathId = 1;
 }

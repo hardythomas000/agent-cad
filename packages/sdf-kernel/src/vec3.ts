@@ -1,4 +1,5 @@
-/** Minimal 3D vector — plain tuple for speed, helpers for clarity. */
+/** Minimal 2D/3D vectors — plain tuples for speed, helpers for clarity. */
+export type Vec2 = [number, number];
 export type Vec3 = [number, number, number];
 
 /** Axis-aligned bounding box. */

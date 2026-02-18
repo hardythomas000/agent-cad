@@ -1,11 +1,21 @@
 // Public API
 export { SDF } from './sdf.js';
 export type { SDFReadback } from './sdf.js';
-export type { Vec3, BoundingBox } from './vec3.js';
+export type { Vec2, Vec3, BoundingBox } from './vec3.js';
 export { vec3 } from './vec3.js';
+
+// 2D Profile API
+export { SDF2D } from './sdf2d.js';
+export type { BoundingBox2D } from './sdf2d.js';
 
 // Primitives
 export { box, sphere, cylinder, cone, torus, plane } from './api.js';
+
+// 2D Profile constructors
+export { polygon, circle2d, rect2d } from './api.js';
+
+// 2D → 3D constructors
+export { extrude, revolve } from './api.js';
 
 // Standalone booleans
 export { union, subtract, intersect } from './api.js';
@@ -30,4 +40,6 @@ export {
   SmoothUnion, SmoothSubtract, SmoothIntersect,
   Translate, RotateAxis, Scale, Mirror,
   Shell, Round, Elongate,
+  Extrude, Revolve,
 } from './sdf.js';
+export { Polygon2D, Circle2D, Rect2D } from './sdf2d.js';
