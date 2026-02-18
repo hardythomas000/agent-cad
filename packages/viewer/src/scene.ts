@@ -1,5 +1,5 @@
 /**
- * Three.js scene setup — renderer, camera, lights, grid, axes.
+ * Three.js scene setup — renderer, cameras, lights, grid, axes.
  */
 
 import * as THREE from 'three';
@@ -7,12 +7,16 @@ import { HEX, onThemeChange } from './theme.js';
 
 export interface SceneContext {
   scene: THREE.Scene;
-  camera: THREE.PerspectiveCamera;
+  perspCamera: THREE.PerspectiveCamera;
+  orthoCamera: THREE.OrthographicCamera;
+  activeCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   renderer: THREE.WebGLRenderer;
   modelGroup: THREE.Group;
-  edgeGroup: THREE.Group;
+  edgeGroup: THREE.Group;     // hard edges
+  wireGroup: THREE.Group;     // full wireframe
   gridHelper: THREE.GridHelper;
   axesHelper: THREE.AxesHelper;
+  setCamera: (type: 'perspective' | 'orthographic') => void;
 }
 
 export function initScene(container: HTMLElement): SceneContext {
@@ -31,11 +35,42 @@ export function initScene(container: HTMLElement): SceneContext {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(HEX.bg);
 
-  // Camera
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 50000);
-  camera.position.set(150, 120, 200);
+  // Cameras
+  const perspCamera = new THREE.PerspectiveCamera(45, 1, 0.1, 50000);
+  perspCamera.position.set(150, 120, 200);
 
-  // Lights — three-point rig with ambient
+  const orthoCamera = new THREE.OrthographicCamera(-200, 200, 150, -150, 0.1, 50000);
+  orthoCamera.position.copy(perspCamera.position);
+  orthoCamera.lookAt(0, 0, 0);
+
+  let activeCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera = perspCamera;
+
+  function setCamera(type: 'perspective' | 'orthographic') {
+    const from = activeCamera;
+    const to = type === 'perspective' ? perspCamera : orthoCamera;
+    if (from === to) return;
+
+    // Copy position and orientation
+    to.position.copy(from.position);
+    to.quaternion.copy(from.quaternion);
+
+    if (to instanceof THREE.OrthographicCamera) {
+      // Set ortho frustum based on distance to target
+      const dist = from.position.length();
+      const aspect = container.clientWidth / container.clientHeight;
+      const halfH = dist * Math.tan((45 * Math.PI) / 360);
+      to.left = -halfH * aspect;
+      to.right = halfH * aspect;
+      to.top = halfH;
+      to.bottom = -halfH;
+      to.updateProjectionMatrix();
+    }
+
+    activeCamera = to;
+    ctx.activeCamera = to;
+  }
+
+  // Lights
   const keyLight = new THREE.DirectionalLight(HEX.keyLight, 1.2);
   keyLight.position.set(200, 300, 200);
   scene.add(keyLight);
@@ -61,13 +96,13 @@ export function initScene(container: HTMLElement): SceneContext {
   const axesHelper = new THREE.AxesHelper(50);
   scene.add(axesHelper);
 
-  // Model group (meshes go here)
+  // Groups
   const modelGroup = new THREE.Group();
   scene.add(modelGroup);
-
-  // Edge group (wireframe overlays)
   const edgeGroup = new THREE.Group();
   scene.add(edgeGroup);
+  const wireGroup = new THREE.Group();
+  scene.add(wireGroup);
 
   // React to theme changes
   onThemeChange(() => {
@@ -83,27 +118,34 @@ export function initScene(container: HTMLElement): SceneContext {
     const w = container.clientWidth;
     const h = container.clientHeight;
     if (w === 0 || h === 0) return;
-    camera.aspect = w / h;
-    camera.updateProjectionMatrix();
+    perspCamera.aspect = w / h;
+    perspCamera.updateProjectionMatrix();
+    const aspect = w / h;
+    const halfH = (orthoCamera.top - orthoCamera.bottom) / 2 || 150;
+    orthoCamera.left = -halfH * aspect;
+    orthoCamera.right = halfH * aspect;
+    orthoCamera.updateProjectionMatrix();
     renderer.setSize(w, h);
   };
   const ro = new ResizeObserver(resize);
   ro.observe(container);
   resize();
 
-  return { scene, camera, renderer, modelGroup, edgeGroup, gridHelper, axesHelper };
+  const ctx: SceneContext = {
+    scene, perspCamera, orthoCamera, activeCamera, renderer,
+    modelGroup, edgeGroup, wireGroup, gridHelper, axesHelper, setCamera,
+  };
+  return ctx;
 }
 
 export function startRenderLoop(
-  renderer: THREE.WebGLRenderer,
-  scene: THREE.Scene,
-  camera: THREE.PerspectiveCamera,
+  ctx: SceneContext,
   onBeforeRender?: () => void,
 ): void {
   function animate() {
     requestAnimationFrame(animate);
     onBeforeRender?.();
-    renderer.render(scene, camera);
+    ctx.renderer.render(ctx.scene, ctx.activeCamera);
   }
   animate();
 }

@@ -31,16 +31,17 @@ const editorError = document.getElementById('editor-error')!;
 // ─── Scene + controls ──────────────────────────────────────────
 
 const ctx = initScene(viewportPane);
-const controls = initControls(ctx.camera, ctx.renderer.domElement);
+let controls = initControls(ctx.activeCamera, ctx.renderer.domElement);
 
-startRenderLoop(ctx.renderer, ctx.scene, ctx.camera, () => {
+startRenderLoop(ctx, () => {
   controls.update();
 });
 
-// ─── Model state ───────────────────────────────────────────────
+// ─── Display modes ─────────────────────────────────────────────
 
-type DisplayMode = 'shaded' | 'shaded-wire' | 'wire';
+type DisplayMode = 'shaded' | 'shaded-edge' | 'shaded-wire' | 'wire';
 let displayMode: DisplayMode = 'shaded';
+let cameraType: 'perspective' | 'orthographic' = 'perspective';
 let showGrid = true;
 let showAxes = true;
 let firstRender = true;
@@ -50,22 +51,31 @@ function applyDisplayMode(): void {
     case 'shaded':
       ctx.modelGroup.visible = true;
       ctx.edgeGroup.visible = false;
+      ctx.wireGroup.visible = false;
+      break;
+    case 'shaded-edge':
+      ctx.modelGroup.visible = true;
+      ctx.edgeGroup.visible = true;
+      ctx.wireGroup.visible = false;
+      setGroupOpacity(ctx.edgeGroup, 0.5);
       break;
     case 'shaded-wire':
       ctx.modelGroup.visible = true;
-      ctx.edgeGroup.visible = true;
-      setEdgeOpacity(0.5);
+      ctx.edgeGroup.visible = false;
+      ctx.wireGroup.visible = true;
+      setGroupOpacity(ctx.wireGroup, 0.5);
       break;
     case 'wire':
       ctx.modelGroup.visible = false;
-      ctx.edgeGroup.visible = true;
-      setEdgeOpacity(1.0);
+      ctx.edgeGroup.visible = false;
+      ctx.wireGroup.visible = true;
+      setGroupOpacity(ctx.wireGroup, 1.0);
       break;
   }
 }
 
-function setEdgeOpacity(opacity: number): void {
-  for (const child of ctx.edgeGroup.children) {
+function setGroupOpacity(group: THREE.Group, opacity: number): void {
+  for (const child of group.children) {
     if (child instanceof THREE.LineSegments) {
       const mat = child.material as THREE.LineBasicMaterial;
       mat.opacity = opacity;
@@ -74,10 +84,10 @@ function setEdgeOpacity(opacity: number): void {
   }
 }
 
-// Initial state
 applyDisplayMode();
 
-/** Dispose GPU resources (geometry + material) for all children, then clear. */
+// ─── GPU cleanup ───────────────────────────────────────────────
+
 function disposeGroup(group: THREE.Group): void {
   for (const child of group.children) {
     if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
@@ -90,16 +100,20 @@ function disposeGroup(group: THREE.Group): void {
   group.clear();
 }
 
+// ─── Display functions ─────────────────────────────────────────
+
 function displayModel(model: LoadedModel, filename: string): void {
   disposeGroup(ctx.modelGroup);
   disposeGroup(ctx.edgeGroup);
+  disposeGroup(ctx.wireGroup);
 
   ctx.modelGroup.add(model.mesh);
   ctx.edgeGroup.add(model.edges);
+  ctx.wireGroup.add(model.wireframe);
   applyDisplayMode();
 
   emptyState.classList.add('hidden');
-  fitCamera(ctx.camera, controls, ctx.modelGroup);
+  fitCamera(ctx.activeCamera, controls, ctx.modelGroup);
 
   statusMode.textContent = filename;
   statusMode.className = '';
@@ -110,24 +124,23 @@ function displayModel(model: LoadedModel, filename: string): void {
   statusDims.textContent = `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`;
 }
 
-/** Display geometry from the kernel bridge (live execution). */
 function displayGeometry(result: ExecuteSuccess): void {
   disposeGroup(ctx.modelGroup);
   disposeGroup(ctx.edgeGroup);
+  disposeGroup(ctx.wireGroup);
 
   ctx.modelGroup.add(result.mesh);
   ctx.edgeGroup.add(result.edges);
+  ctx.wireGroup.add(result.wireframe);
   applyDisplayMode();
 
   emptyState.classList.add('hidden');
 
-  // Only fit camera on first successful render
   if (firstRender) {
-    fitCamera(ctx.camera, controls, ctx.modelGroup);
+    fitCamera(ctx.activeCamera, controls, ctx.modelGroup);
     firstRender = false;
   }
 
-  // Update status
   statusMode.textContent = 'Live';
   statusMode.className = 'status-live';
   statusTris.textContent = result.triangleCount.toLocaleString();
@@ -136,7 +149,6 @@ function displayGeometry(result: ExecuteSuccess): void {
   result.bounds.getSize(size);
   statusDims.textContent = `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`;
 
-  // Clear error
   editorError.classList.remove('visible');
   editorError.textContent = '';
 }
@@ -159,7 +171,6 @@ function runCode(code: string): void {
   }
 }
 
-// Debounce helper
 function debounce(fn: (arg: string) => void, ms: number): (arg: string) => void {
   let timer: ReturnType<typeof setTimeout>;
   return (arg: string) => {
@@ -176,10 +187,9 @@ const editor = initEditor(editorContainer, (code) => {
   debouncedRun(code);
 });
 
-// Run the initial default code after UI paints
 requestAnimationFrame(() => runCode(editor.state.doc.toString()));
 
-// ─── Ctrl+Enter to run immediately ─────────────────────────────
+// ─── Ctrl+Enter ────────────────────────────────────────────────
 
 document.addEventListener('keydown', (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -194,13 +204,18 @@ initSplitPane(editorPane, divider, () => {
   const w = viewportPane.clientWidth;
   const h = viewportPane.clientHeight;
   if (w > 0 && h > 0) {
-    ctx.camera.aspect = w / h;
-    ctx.camera.updateProjectionMatrix();
+    ctx.perspCamera.aspect = w / h;
+    ctx.perspCamera.updateProjectionMatrix();
+    const aspect = w / h;
+    const halfH = (ctx.orthoCamera.top - ctx.orthoCamera.bottom) / 2 || 150;
+    ctx.orthoCamera.left = -halfH * aspect;
+    ctx.orthoCamera.right = halfH * aspect;
+    ctx.orthoCamera.updateProjectionMatrix();
     ctx.renderer.setSize(w, h);
   }
 });
 
-// ─── STL drop/load (still works alongside live mode) ───────────
+// ─── STL drop/load ─────────────────────────────────────────────
 
 initDropZone(viewportPane, dropOverlay, fileInput, async (file: File) => {
   try {
@@ -212,20 +227,20 @@ initDropZone(viewportPane, dropOverlay, fileInput, async (file: File) => {
   }
 });
 
-// ─── Toolbar buttons ───────────────────────────────────────────
+// ─── Toolbar: view presets ─────────────────────────────────────
 
 document.querySelectorAll('.toolbar-btn[data-view]').forEach((btn) => {
   btn.addEventListener('click', () => {
     if (ctx.modelGroup.children.length === 0) return;
     const preset = (btn as HTMLElement).dataset.view as ViewPreset;
     const bounds = new THREE.Box3().setFromObject(ctx.modelGroup);
-    setView(preset, ctx.camera, controls, bounds);
+    setView(preset, ctx.activeCamera, controls, bounds);
   });
 });
 
 document.querySelector('.toolbar-btn[data-action="fit"]')?.addEventListener('click', () => {
   if (ctx.modelGroup.children.length > 0) {
-    fitCamera(ctx.camera, controls, ctx.modelGroup);
+    fitCamera(ctx.activeCamera, controls, ctx.modelGroup);
   }
 });
 
@@ -237,13 +252,16 @@ document.querySelector('.toolbar-btn[data-action="run"]')?.addEventListener('cli
   runCode(editor.state.doc.toString());
 });
 
-// Display mode cycle: Shaded → Shaded+Wire → Wire → Shaded
-const DISPLAY_MODES: DisplayMode[] = ['shaded', 'shaded-wire', 'wire'];
+// ─── Toolbar: display mode cycle ───────────────────────────────
+
+const DISPLAY_MODES: DisplayMode[] = ['shaded', 'shaded-edge', 'shaded-wire', 'wire'];
 const DISPLAY_LABELS: Record<DisplayMode, string> = {
   'shaded': 'Shade',
+  'shaded-edge': 'S+E',
   'shaded-wire': 'S+W',
   'wire': 'Wire',
 };
+
 const wireBtn = document.querySelector('.toolbar-btn[data-toggle="wireframe"]');
 wireBtn?.addEventListener('click', () => {
   const idx = DISPLAY_MODES.indexOf(displayMode);
@@ -253,27 +271,44 @@ wireBtn?.addEventListener('click', () => {
   wireBtn.classList.toggle('active', displayMode !== 'shaded');
 });
 
-// Theme toggle
+// ─── Toolbar: camera toggle ────────────────────────────────────
+
+const camBtn = document.querySelector('.toolbar-btn[data-toggle="camera"]');
+camBtn?.addEventListener('click', () => {
+  cameraType = cameraType === 'perspective' ? 'orthographic' : 'perspective';
+  ctx.setCamera(cameraType);
+
+  // Recreate controls for the new camera
+  const target = controls.target.clone();
+  controls.dispose();
+  controls = initControls(ctx.activeCamera, ctx.renderer.domElement);
+  controls.target.copy(target);
+  controls.update();
+
+  camBtn.textContent = cameraType === 'perspective' ? 'Persp' : 'Ortho';
+  camBtn.classList.toggle('active', cameraType === 'orthographic');
+});
+
+// ─── Toolbar: theme toggle ─────────────────────────────────────
+
 const themeBtn = document.querySelector('.toolbar-btn[data-toggle="theme"]');
 themeBtn?.addEventListener('click', () => {
-  const next: ThemeMode = getTheme() === 'dark' ? 'light' : 'dark';
-  setTheme(next);
+  setTheme(getTheme() === 'dark' ? 'light' : 'dark');
 });
 
 onThemeChange((mode) => {
   document.documentElement.setAttribute('data-theme', mode);
   themeBtn?.classList.toggle('active', mode === 'light');
-  // Re-run code to pick up new material colors
   runCode(editor.state.doc.toString());
 });
 
-// Apply saved theme on load
 document.documentElement.setAttribute('data-theme', getTheme());
 
-// Toggle buttons (grid, axes)
+// ─── Toolbar: grid/axes toggles ────────────────────────────────
+
 document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
   const toggle = (btn as HTMLElement).dataset.toggle;
-  if (toggle === 'wireframe' || toggle === 'theme') return; // handled above
+  if (toggle === 'wireframe' || toggle === 'theme' || toggle === 'camera') return;
   btn.addEventListener('click', () => {
     switch (toggle) {
       case 'grid':

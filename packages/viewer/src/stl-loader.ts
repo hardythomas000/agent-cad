@@ -8,7 +8,8 @@ import { HEX } from './theme.js';
 
 export interface LoadedModel {
   mesh: THREE.Mesh;
-  edges: THREE.LineSegments;
+  edges: THREE.LineSegments;     // hard edges (30° threshold)
+  wireframe: THREE.LineSegments; // all triangle edges
   triangleCount: number;
   bounds: THREE.Box3;
 }
@@ -31,6 +32,15 @@ export function loadSTLBuffer(buffer: ArrayBuffer): LoadedModel {
 
   const mesh = new THREE.Mesh(geometry, material);
 
+  // Hard edges (30° threshold — feature edges only)
+  const edgeGeo = new THREE.EdgesGeometry(geometry, 30);
+  const edgeMat = new THREE.LineBasicMaterial({
+    color: HEX.wireframe,
+    opacity: 0.5,
+    transparent: true,
+  });
+  const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+
   // Wireframe — all triangle edges
   const wireGeo = new THREE.WireframeGeometry(geometry);
   const wireMat = new THREE.LineBasicMaterial({
@@ -38,7 +48,7 @@ export function loadSTLBuffer(buffer: ArrayBuffer): LoadedModel {
     opacity: 0.5,
     transparent: true,
   });
-  const edges = new THREE.LineSegments(wireGeo, wireMat);
+  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
 
   const bounds = new THREE.Box3().setFromBufferAttribute(
     geometry.getAttribute('position') as THREE.BufferAttribute,
@@ -47,6 +57,7 @@ export function loadSTLBuffer(buffer: ArrayBuffer): LoadedModel {
   return {
     mesh,
     edges,
+    wireframe,
     triangleCount: geometry.index
       ? geometry.index.count / 3
       : (geometry.getAttribute('position') as THREE.BufferAttribute).count / 3,

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 export function initControls(
-  camera: THREE.PerspectiveCamera,
+  camera: THREE.PerspectiveCamera | THREE.OrthographicCamera,
   domElement: HTMLElement,
 ): OrbitControls {
   const controls = new OrbitControls(camera, domElement);

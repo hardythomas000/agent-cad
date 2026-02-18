@@ -15,7 +15,8 @@ import { HEX } from './theme.js';
 
 export interface ExecuteSuccess {
   geometry: THREE.BufferGeometry;
-  edges: THREE.LineSegments;
+  edges: THREE.LineSegments;     // hard edges (30° threshold)
+  wireframe: THREE.LineSegments; // all triangle edges
   mesh: THREE.Mesh;
   triangleCount: number;
   bounds: THREE.Box3;
@@ -156,6 +157,15 @@ function meshToResult(triMesh: TriangleMesh): ExecuteResult {
   });
   const mesh = new THREE.Mesh(geometry, material);
 
+  // Hard edges (30° threshold — feature edges only)
+  const edgeGeo = new THREE.EdgesGeometry(geometry, 30);
+  const edgeMat = new THREE.LineBasicMaterial({
+    color: HEX.wireframe,
+    opacity: 0.5,
+    transparent: true,
+  });
+  const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+
   // Wireframe — all triangle edges
   const wireGeo = new THREE.WireframeGeometry(geometry);
   const wireMat = new THREE.LineBasicMaterial({
@@ -163,7 +173,7 @@ function meshToResult(triMesh: TriangleMesh): ExecuteResult {
     opacity: 0.5,
     transparent: true,
   });
-  const edges = new THREE.LineSegments(wireGeo, wireMat);
+  const wireframe = new THREE.LineSegments(wireGeo, wireMat);
 
   const bounds = new THREE.Box3();
   bounds.setFromBufferAttribute(geometry.getAttribute('position') as THREE.BufferAttribute);
@@ -171,6 +181,7 @@ function meshToResult(triMesh: TriangleMesh): ExecuteResult {
   return {
     geometry,
     edges,
+    wireframe,
     mesh,
     triangleCount: triMesh.triangleCount,
     bounds,
