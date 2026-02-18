@@ -10,7 +10,9 @@ import { z } from 'zod';
 import {
   box, sphere, cylinder, cone, torus, plane,
   marchingCubes, exportSTL,
+  generateRasterSurfacing, emitFanucGCode,
   type SDF, type TriangleMesh,
+  type ToolDefinition,
 } from '@agent-cad/sdf-kernel';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -426,6 +428,118 @@ export function registerTools(server: McpServer): void {
         file_size_bytes: stlBuffer.byteLength,
         triangle_count: mesh.triangleCount,
         bounds: mesh.bounds,
+      };
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── CAM Tools (3) ──────────────────────────────────────────
+
+  server.tool(
+    'define_tool',
+    'Define a cutting tool for CAM toolpath generation. Currently supports ball nose end mills.',
+    {
+      type: z.enum(['ballnose']).describe('Tool type'),
+      diameter: z.number().positive().describe('Tool diameter in mm'),
+      flute_length: z.number().positive().optional().describe('Flute length in mm'),
+      shank_diameter: z.number().positive().optional().describe('Shank diameter in mm'),
+      name: z.string().optional().describe('Tool name/ID (letters, digits, hyphens, underscores only)'),
+    },
+    async ({ type, diameter, flute_length, shank_diameter, name }) => {
+      const tool: ToolDefinition = {
+        name: name ?? `tool_${Date.now()}`,
+        type,
+        diameter,
+        radius: diameter / 2,
+        flute_length,
+        shank_diameter,
+      };
+      const result = registry.createTool(tool, name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'generate_surfacing_toolpath',
+    'Generate a 3-axis ball nose parallel raster surfacing toolpath directly from SDF geometry via drop cutter. No mesh needed — operates on exact SDF.',
+    {
+      shape: z.string().describe('ID of shape to machine'),
+      tool: z.string().describe('ID of cutting tool to use'),
+      direction: z.enum(['x', 'y']).default('x').describe('Raster direction (cut along X or Y)'),
+      stepover_pct: z.number().min(1).max(100).default(10)
+        .describe('Stepover as % of tool diameter (e.g. 10 = 10%)'),
+      point_spacing: z.number().positive().optional()
+        .describe('Point spacing along cut direction in mm (default: same as stepover distance)'),
+      feed_rate: z.number().positive().describe('Cutting feed rate in mm/min'),
+      plunge_rate: z.number().positive().optional()
+        .describe('Plunge feed rate in mm/min (default: feed_rate / 3)'),
+      rpm: z.number().positive().describe('Spindle speed RPM'),
+      safe_z: z.number().describe('Safe retract height in mm'),
+      zigzag: z.boolean().default(true).describe('Zigzag pattern (true) or unidirectional (false)'),
+      name: z.string().optional().describe('Toolpath name/ID'),
+    },
+    async (params) => {
+      const shapeEntry = registry.get(params.shape);
+      const tool = registry.getTool(params.tool);
+      const start = Date.now();
+      const result = generateRasterSurfacing(shapeEntry.shape, tool, {
+        direction: params.direction,
+        stepover_pct: params.stepover_pct,
+        point_spacing: params.point_spacing,
+        feed_rate: params.feed_rate,
+        plunge_rate: params.plunge_rate,
+        rpm: params.rpm,
+        safe_z: params.safe_z,
+        zigzag: params.zigzag,
+      });
+      const elapsed = Date.now() - start;
+      const summary = registry.createToolpath(
+        { ...result, id: '' },
+        params.name,
+      );
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ...summary, computed_in_ms: elapsed }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'export_gcode',
+    'Export a toolpath as Fanuc-compatible G-code (.nc file). Must call generate_surfacing_toolpath first.',
+    {
+      toolpath: z.string().describe('ID of toolpath to export'),
+      program_number: z.number().int().min(1).max(9999).optional()
+        .describe('O-number for the program (default: 1001)'),
+      work_offset: z.string().optional().describe('Work offset code (default: G54)'),
+      coolant: z.enum(['flood', 'mist', 'off']).optional()
+        .describe('Coolant mode (default: flood)'),
+      filename: z.string().optional().describe('Output filename (default: auto from toolpath ID)'),
+    },
+    async (params) => {
+      const toolpath = registry.getToolpath(params.toolpath);
+      const gcode = emitFanucGCode(toolpath, {
+        program_number: params.program_number,
+        work_offset: params.work_offset,
+        coolant: params.coolant,
+      });
+
+      // Write to output directory
+      const exportDir = path.join(process.env.TMPDIR ?? '/tmp', 'agent-cad');
+      fs.mkdirSync(exportDir, { recursive: true });
+      const safeName = (params.filename ?? `${toolpath.id}.nc`).replace(/[^a-zA-Z0-9_.-]/g, '_');
+      const filePath = path.join(exportDir, safeName);
+      fs.writeFileSync(filePath, gcode, 'utf-8');
+
+      const result = {
+        toolpath_id: toolpath.id,
+        type: 'gcode_export',
+        file_path: filePath,
+        file_size_bytes: Buffer.byteLength(gcode),
+        line_count: gcode.split('\n').length,
+        estimated_cycle_time_min: toolpath.stats.estimated_time_min,
       };
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }

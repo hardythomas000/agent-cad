@@ -15,6 +15,14 @@ export type { TriangleMesh } from './mesh.js';
 export { marchingCubes } from './marching-cubes.js';
 export { exportSTL } from './stl.js';
 
+// Toolpath generation
+export type { ToolDefinition, ToolpathPoint, ToolpathParams, ToolpathResult, ToolpathStats } from './toolpath.js';
+export { generateRasterSurfacing } from './toolpath.js';
+
+// G-code emission
+export type { GCodeConfig } from './gcode.js';
+export { emitFanucGCode } from './gcode.js';
+
 // Node classes (for advanced use / type checking)
 export {
   Sphere, Box, Cylinder, Cone, Torus, Plane,
