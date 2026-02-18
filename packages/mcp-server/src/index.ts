@@ -2,7 +2,7 @@
 /**
  * agent-cad MCP Server
  *
- * Wraps the SDF geometry kernel as 21 callable tools for LLM agents.
+ * Wraps the SDF geometry kernel as 23 callable tools for LLM agents.
  * Runs over stdio transport — plug into Claude Code, Cursor, etc.
  */
 

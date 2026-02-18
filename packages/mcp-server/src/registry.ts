@@ -35,6 +35,9 @@ export function create(shape: SDF, type: string, name?: string): ShapeResult {
     // Auto-generated collision — bump
     return create(shape, type);
   }
+  if (shapes.has(id)) {
+    meshCache.delete(id); // Invalidate stale mesh when overwriting a shape
+  }
   shapes.set(id, { id, shape, type });
   return {
     shape_id: id,

@@ -365,7 +365,7 @@ These principles aren't theoretical — they're backed by emerging research:
 - [ ] Display SDF results in viewer
 
 ### Phase 3: Agent Layer ✅
-- [x] MCP server exposing 21 tools (`@agent-cad/mcp-server`)
+- [x] MCP server exposing 23 tools (`@agent-cad/mcp-server`)
 - [x] In-memory shape registry with auto/named IDs
 - [x] Every tool returns structured readback (the "kernel talks back" principle)
 - [x] Registered in Claude Code as MCP server

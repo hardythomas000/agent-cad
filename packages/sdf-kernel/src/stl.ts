@@ -22,6 +22,11 @@ export function exportSTL(mesh: TriangleMesh, header = 'agent-cad'): ArrayBuffer
   }
 
   const { vertices, indices, triangleCount } = mesh;
+  if (indices.length !== triangleCount * 3) {
+    throw new Error(
+      `Mesh data inconsistent: indices.length (${indices.length}) !== triangleCount * 3 (${triangleCount * 3})`
+    );
+  }
   const size = 84 + triangleCount * 50;
   const buffer = new ArrayBuffer(size);
   const view = new DataView(buffer);

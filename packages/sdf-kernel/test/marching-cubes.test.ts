@@ -114,9 +114,8 @@ describe('marchingCubes', () => {
 
   it('meshes a very small shape relative to resolution', () => {
     const tiny = sphere(1); // 2mm diameter
-    const mesh = marchingCubes(tiny, 2); // voxel = full diameter
-    // Should still produce some triangles despite coarse sampling
-    expect(mesh.triangleCount).toBeGreaterThanOrEqual(0);
+    const mesh = marchingCubes(tiny, 0.5); // fine enough to capture the shape
+    expect(mesh.triangleCount).toBeGreaterThan(10);
     expect(mesh.vertexCount).toBe(mesh.triangleCount * 3);
     // No NaN in any vertex
     for (const v of mesh.vertices) {
@@ -129,9 +128,9 @@ describe('marchingCubes', () => {
   it('produces no NaN vertices (interpolation safety)', () => {
     // Two overlapping spheres create near-equal SDF values in the
     // overlap region, exercising the denominator guard in interpolate()
-    const a = sphere(6).translate(-1, 0, 0);
-    const b = sphere(6).translate(1, 0, 0);
-    const mesh = marchingCubes(a.union(b), 3);
+    const a = sphere(5).translate(-1, 0, 0);
+    const b = sphere(5).translate(1, 0, 0);
+    const mesh = marchingCubes(a.union(b), 4);
     expect(mesh.triangleCount).toBeGreaterThan(10);
     for (const v of mesh.vertices) {
       for (let i = 0; i < 3; i++) {

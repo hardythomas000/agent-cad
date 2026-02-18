@@ -27,7 +27,7 @@ export function registerTools(server: McpServer): void {
       width: z.number().positive().describe('Width (X dimension) in mm'),
       height: z.number().positive().describe('Height (Y dimension) in mm'),
       depth: z.number().positive().describe('Depth (Z dimension) in mm'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ width, height, depth, name }) => {
       const shape = box(width, height, depth);
@@ -41,7 +41,7 @@ export function registerTools(server: McpServer): void {
     'Create a sphere centered at origin.',
     {
       radius: z.number().positive().describe('Radius in mm'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ radius, name }) => {
       const shape = sphere(radius);
@@ -56,7 +56,7 @@ export function registerTools(server: McpServer): void {
     {
       radius: z.number().positive().describe('Radius in mm'),
       height: z.number().positive().describe('Height in mm'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ radius, height, name }) => {
       const shape = cylinder(radius, height);
@@ -71,7 +71,7 @@ export function registerTools(server: McpServer): void {
     {
       base_radius: z.number().positive().describe('Base radius in mm'),
       height: z.number().positive().describe('Height in mm'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ base_radius, height, name }) => {
       const shape = cone(base_radius, height);
@@ -86,7 +86,7 @@ export function registerTools(server: McpServer): void {
     {
       major_radius: z.number().positive().describe('Major radius (center to tube center) in mm'),
       minor_radius: z.number().positive().describe('Minor radius (tube radius) in mm'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ major_radius, minor_radius, name }) => {
       const shape = torus(major_radius, minor_radius);
@@ -103,7 +103,7 @@ export function registerTools(server: McpServer): void {
       normal_y: z.number().describe('Normal Y component'),
       normal_z: z.number().describe('Normal Z component'),
       offset: z.number().describe('Offset along normal'),
-      name: z.string().optional().describe('Optional name for the shape'),
+      name: z.string().optional().describe('Optional name for the shape (letters, digits, hyphens, underscores only)'),
     },
     async ({ normal_x, normal_y, normal_z, offset, name }) => {
       const shape = plane([normal_x, normal_y, normal_z], offset);
@@ -121,7 +121,7 @@ export function registerTools(server: McpServer): void {
       shape_a: z.string().describe('ID of first shape'),
       shape_b: z.string().describe('ID of second shape'),
       smooth_radius: z.number().min(0).default(0).describe('Blend radius (0 = sharp)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape_a, shape_b, smooth_radius, name }) => {
       const a = registry.get(shape_a).shape;
@@ -141,7 +141,7 @@ export function registerTools(server: McpServer): void {
       shape_a: z.string().describe('ID of shape to cut from'),
       shape_b: z.string().describe('ID of shape to remove'),
       smooth_radius: z.number().min(0).default(0).describe('Blend radius (0 = sharp)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape_a, shape_b, smooth_radius, name }) => {
       const a = registry.get(shape_a).shape;
@@ -161,7 +161,7 @@ export function registerTools(server: McpServer): void {
       shape_a: z.string().describe('ID of first shape'),
       shape_b: z.string().describe('ID of second shape'),
       smooth_radius: z.number().min(0).default(0).describe('Blend radius (0 = sharp)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape_a, shape_b, smooth_radius, name }) => {
       const a = registry.get(shape_a).shape;
@@ -184,7 +184,7 @@ export function registerTools(server: McpServer): void {
       x: z.number().describe('Translation in X (mm)'),
       y: z.number().describe('Translation in Y (mm)'),
       z: z.number().describe('Translation in Z (mm)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, x, y, z: tz, name }) => {
       const s = registry.get(shape).shape;
@@ -201,7 +201,7 @@ export function registerTools(server: McpServer): void {
       shape: z.string().describe('ID of shape to rotate'),
       axis: z.enum(['x', 'y', 'z']).describe('Rotation axis'),
       degrees: z.number().describe('Rotation angle in degrees'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, axis, degrees, name }) => {
       const s = registry.get(shape).shape;
@@ -222,7 +222,7 @@ export function registerTools(server: McpServer): void {
     {
       shape: z.string().describe('ID of shape to scale'),
       factor: z.number().positive().describe('Scale factor (>0)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, factor, name }) => {
       const s = registry.get(shape).shape;
@@ -238,7 +238,7 @@ export function registerTools(server: McpServer): void {
     {
       shape: z.string().describe('ID of shape to mirror'),
       axis: z.enum(['x', 'y', 'z']).describe('Mirror axis'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, axis, name }) => {
       const s = registry.get(shape).shape;
@@ -256,7 +256,7 @@ export function registerTools(server: McpServer): void {
     {
       shape: z.string().describe('ID of shape to shell'),
       thickness: z.number().positive().describe('Wall thickness in mm'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, thickness, name }) => {
       const s = registry.get(shape).shape;
@@ -272,7 +272,7 @@ export function registerTools(server: McpServer): void {
     {
       shape: z.string().describe('ID of shape to round'),
       radius: z.number().positive().describe('Rounding radius in mm'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, radius, name }) => {
       const s = registry.get(shape).shape;
@@ -290,7 +290,7 @@ export function registerTools(server: McpServer): void {
       x: z.number().min(0).describe('Elongation in X (mm)'),
       y: z.number().min(0).describe('Elongation in Y (mm)'),
       z: z.number().min(0).describe('Elongation in Z (mm)'),
-      name: z.string().optional().describe('Optional name for result'),
+      name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, x, y, z: ez, name }) => {
       const s = registry.get(shape).shape;
@@ -365,11 +365,11 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     'compute_mesh',
-    'Convert an SDF shape to a triangle mesh via marching cubes. Must be called before export_mesh.',
+    'Convert an SDF shape to a triangle mesh via marching cubes. Must be called before export_mesh. Returns mesh stats (vertex/triangle count, bounds, timing) so you can inspect quality before exporting.',
     {
       shape: z.string().describe('ID of shape to mesh'),
       resolution: z.number().min(0.1).max(10).default(2).describe('Voxel size in mm (0.1-10, default 2). Smaller = finer detail, slower.'),
-      name: z.string().optional().describe('Optional name for the mesh result'),
+      name: z.string().optional().describe('Optional name for the mesh result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, resolution, name }) => {
       const entry = registry.get(shape);
@@ -378,7 +378,7 @@ export function registerTools(server: McpServer): void {
       const elapsed = Date.now() - start;
       const readback = entry.shape.readback();
       const result = {
-        shape_id: name ?? entry.id,
+        shape_id: entry.id,
         type: 'mesh',
         readback,
         mesh_info: {
@@ -406,7 +406,7 @@ export function registerTools(server: McpServer): void {
       const mesh = registry.getMesh(entry.id);
       if (!mesh) {
         throw new Error(
-          `No mesh cached for "${entry.id}". Call compute_mesh first to generate the mesh.`
+          `No mesh cached for "${entry.id}". Call compute_mesh(shape: "${entry.id}", resolution: 2) first to generate the mesh.`
         );
       }
       const stlBuffer = exportSTL(mesh);
