@@ -101,20 +101,34 @@ computeMesh(bracket, 1.0)
 exportSTL(bracket, "bracket.stl")
 `;
 
-export function initEditor(container: HTMLElement): EditorView {
+export function initEditor(
+  container: HTMLElement,
+  onChange?: (code: string) => void,
+): EditorView {
+  const extensions = [
+    lineNumbers(),
+    highlightActiveLine(),
+    highlightActiveLineGutter(),
+    history(),
+    keymap.of([...defaultKeymap, ...historyKeymap]),
+    javascript({ typescript: true }),
+    agentCadTheme,
+    syntaxHighlighting(agentCadHighlight),
+  ];
+
+  if (onChange) {
+    extensions.push(
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          onChange(update.state.doc.toString());
+        }
+      }),
+    );
+  }
+
   const state = EditorState.create({
     doc: DEFAULT_CODE,
-    extensions: [
-      lineNumbers(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
-      history(),
-      keymap.of([...defaultKeymap, ...historyKeymap]),
-      javascript({ typescript: true }),
-      agentCadTheme,
-      syntaxHighlighting(agentCadHighlight),
-      EditorState.readOnly.of(true),
-    ],
+    extensions,
   });
 
   return new EditorView({

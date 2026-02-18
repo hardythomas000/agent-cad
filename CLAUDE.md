@@ -68,9 +68,9 @@ npm run dev:viewer
 - 104 tests passing
 - First LLM-authored geometry demo: bracket with pocket + 2 through-holes (bracket.stl)
 - Viewer v1: Three.js STL viewer + CodeMirror 6 editor + split pane (Vite app)
+- Viewer v2: live kernel connection — editor DSL executes against kernel, mesh renders in viewport (debounced, Ctrl+Enter, error overlay)
 
 ### Not Started
-- Viewer v2: live kernel connection (execute DSL in editor, render in viewport)
 - Semantic DSL (constraint solver, named topology)
 - B-Rep export (STEP/IGES via OCCT)
 - Toolpath generation (beyond drop_cutter)

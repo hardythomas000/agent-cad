@@ -54,6 +54,7 @@
       flex-direction: column;
       overflow: hidden;
       border-right: 1px solid var(--border-subtle);
+      position: relative;
     }
 
     #editor-header {
@@ -299,6 +300,49 @@
       50% { opacity: 1; transform: scale(1.05); }
     }
 
+    /* ─── Editor error overlay ────────────────── */
+
+    #editor-error {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(180, 60, 60, 0.12);
+      border-top: 1px solid rgba(180, 60, 60, 0.3);
+      padding: 6px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #e06060;
+      white-space: pre-wrap;
+      max-height: 80px;
+      overflow-y: auto;
+      display: none;
+      z-index: 5;
+    }
+
+    #editor-error.visible { display: block; }
+
+    /* ─── Live indicator ──────────────────────── */
+
+    .status-live {
+      color: var(--teal);
+      font-weight: 500;
+    }
+
+    .status-live::before {
+      content: '';
+      display: inline-block;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--teal);
+      margin-right: 4px;
+      box-shadow: 0 0 4px var(--teal-glow);
+    }
+
+    .status-live.error { color: #e06060; }
+    .status-live.error::before { background: #e06060; box-shadow: 0 0 4px rgba(224, 96, 96, 0.4); }
+
     /* ─── Scrollbar ────────────────────────────── */
 
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -312,6 +356,7 @@
     <div id="editor-pane">
       <div id="editor-header">agent-cad</div>
       <div id="editor-container"></div>
+      <div id="editor-error"></div>
     </div>
     <div id="divider"></div>
     <div id="viewport-pane">
@@ -331,11 +376,12 @@
           <button class="toolbar-btn active" data-toggle="grid">Grid</button>
           <button class="toolbar-btn active" data-toggle="axes">Axes</button>
         </div>
+        <button class="toolbar-btn standalone" data-action="run" title="Ctrl+Enter">Run</button>
         <button class="toolbar-btn standalone" data-action="load">Load STL</button>
       </div>
       <div id="empty-state">
-        <div class="empty-title">Drop an STL file to begin</div>
-        <div class="empty-hint">or click Load STL</div>
+        <div class="empty-title">Edit code to generate geometry</div>
+        <div class="empty-hint">or drop an STL file</div>
       </div>
       <div id="drop-overlay">
         <div class="drop-icon">+</div>
@@ -343,7 +389,7 @@
         <div class="drop-hint">.stl binary or ASCII</div>
       </div>
       <div id="status-bar">
-        <span><span class="status-label">File</span> <span id="status-file">-</span></span>
+        <span id="status-mode" class="status-live">Live</span>
         <span><span class="status-label">Tris</span> <span id="status-tris">-</span></span>
         <span><span class="status-label">Size</span> <span id="status-dims">-</span></span>
       </div>

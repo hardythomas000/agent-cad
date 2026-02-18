@@ -1,6 +1,6 @@
 /**
  * Agent CAD Viewer — entry point.
- * Wires scene, controls, editor, STL loading, and view presets together.
+ * Wires scene, controls, editor, kernel bridge, STL loading, and view presets.
  */
 
 import * as THREE from 'three';
@@ -9,8 +9,9 @@ import { initControls } from './controls.js';
 import { initEditor } from './editor.js';
 import { initSplitPane } from './split-pane.js';
 import { initDropZone } from './drop-zone.js';
-import { loadSTLFile, loadSTLUrl, type LoadedModel } from './stl-loader.js';
+import { loadSTLFile, type LoadedModel } from './stl-loader.js';
 import { setView, fitCamera, type ViewPreset } from './view-presets.js';
+import { executeCode, isError, type ExecuteSuccess } from './kernel-bridge.js';
 
 // ─── DOM elements ──────────────────────────────────────────────
 
@@ -20,10 +21,11 @@ const divider = document.getElementById('divider')!;
 const viewportPane = document.getElementById('viewport-pane')!;
 const dropOverlay = document.getElementById('drop-overlay')!;
 const fileInput = document.getElementById('file-input') as HTMLInputElement;
-const statusFile = document.getElementById('status-file')!;
+const statusMode = document.getElementById('status-mode')!;
 const statusTris = document.getElementById('status-tris')!;
 const statusDims = document.getElementById('status-dims')!;
 const emptyState = document.getElementById('empty-state')!;
+const editorError = document.getElementById('editor-error')!;
 
 // ─── Scene + controls ──────────────────────────────────────────
 
@@ -34,14 +36,127 @@ startRenderLoop(ctx.renderer, ctx.scene, ctx.camera, () => {
   controls.update();
 });
 
+// ─── Model state ───────────────────────────────────────────────
+
+let showWireframe = false;
+let showGrid = true;
+let showAxes = true;
+let firstRender = true;
+
+/** Dispose GPU resources (geometry + material) for all children, then clear. */
+function disposeGroup(group: THREE.Group): void {
+  for (const child of group.children) {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments) {
+      child.geometry.dispose();
+      if (child.material instanceof THREE.Material) {
+        child.material.dispose();
+      }
+    }
+  }
+  group.clear();
+}
+
+function displayModel(model: LoadedModel, filename: string): void {
+  disposeGroup(ctx.modelGroup);
+  disposeGroup(ctx.edgeGroup);
+
+  ctx.modelGroup.add(model.mesh);
+  ctx.edgeGroup.add(model.edges);
+  model.edges.visible = showWireframe;
+
+  emptyState.classList.add('hidden');
+  fitCamera(ctx.camera, controls, ctx.modelGroup);
+
+  statusMode.textContent = filename;
+  statusMode.className = '';
+  statusTris.textContent = model.triangleCount.toLocaleString();
+
+  const size = new THREE.Vector3();
+  model.bounds.getSize(size);
+  statusDims.textContent = `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`;
+}
+
+/** Display geometry from the kernel bridge (live execution). */
+function displayGeometry(result: ExecuteSuccess): void {
+  disposeGroup(ctx.modelGroup);
+  disposeGroup(ctx.edgeGroup);
+
+  ctx.modelGroup.add(result.mesh);
+  ctx.edgeGroup.add(result.edges);
+  result.edges.visible = showWireframe;
+
+  emptyState.classList.add('hidden');
+
+  // Only fit camera on first successful render
+  if (firstRender) {
+    fitCamera(ctx.camera, controls, ctx.modelGroup);
+    firstRender = false;
+  }
+
+  // Update status
+  statusMode.textContent = 'Live';
+  statusMode.className = 'status-live';
+  statusTris.textContent = result.triangleCount.toLocaleString();
+
+  const size = new THREE.Vector3();
+  result.bounds.getSize(size);
+  statusDims.textContent = `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`;
+
+  // Clear error
+  editorError.classList.remove('visible');
+  editorError.textContent = '';
+}
+
+function showError(msg: string): void {
+  editorError.textContent = msg;
+  editorError.classList.add('visible');
+  statusMode.textContent = 'Error';
+  statusMode.className = 'status-live error';
+}
+
+// ─── Live execution ─────────────────────────────────────────────
+
+function runCode(code: string): void {
+  const result = executeCode(code);
+  if (isError(result)) {
+    showError(result.error);
+  } else {
+    displayGeometry(result);
+  }
+}
+
+// Debounce helper
+function debounce(fn: (arg: string) => void, ms: number): (arg: string) => void {
+  let timer: ReturnType<typeof setTimeout>;
+  return (arg: string) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(arg), ms);
+  };
+}
+
+const debouncedRun = debounce(runCode, 300);
+
 // ─── Editor ────────────────────────────────────────────────────
 
-initEditor(editorContainer);
+const editor = initEditor(editorContainer, (code) => {
+  debouncedRun(code);
+});
+
+// Run the initial default code on startup
+runCode(editor.state.doc.toString());
+
+// ─── Ctrl+Enter to run immediately ─────────────────────────────
+
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    runCode(editor.state.doc.toString());
+  }
+});
 
 // ─── Split pane ────────────────────────────────────────────────
 
 initSplitPane(editorPane, divider, () => {
-  // Trigger renderer resize
   const w = viewportPane.clientWidth;
   const h = viewportPane.clientHeight;
   if (w > 0 && h > 0) {
@@ -51,41 +166,7 @@ initSplitPane(editorPane, divider, () => {
   }
 });
 
-// ─── Model state ───────────────────────────────────────────────
-
-let currentModel: LoadedModel | null = null;
-let showWireframe = false;
-let showGrid = true;
-let showAxes = true;
-
-function displayModel(model: LoadedModel, filename: string): void {
-  // Clear previous
-  ctx.modelGroup.clear();
-  ctx.edgeGroup.clear();
-
-  // Add new
-  ctx.modelGroup.add(model.mesh);
-  ctx.edgeGroup.add(model.edges);
-  model.edges.visible = showWireframe;
-
-  currentModel = model;
-
-  // Hide empty state
-  emptyState.classList.add('hidden');
-
-  // Fit camera
-  fitCamera(ctx.camera, controls, ctx.modelGroup);
-
-  // Update status
-  statusFile.textContent = filename;
-  statusTris.textContent = model.triangleCount.toLocaleString();
-
-  const size = new THREE.Vector3();
-  model.bounds.getSize(size);
-  statusDims.textContent = `${size.x.toFixed(1)} × ${size.y.toFixed(1)} × ${size.z.toFixed(1)} mm`;
-}
-
-// ─── STL loading ───────────────────────────────────────────────
+// ─── STL drop/load (still works alongside live mode) ───────────
 
 initDropZone(viewportPane, dropOverlay, fileInput, async (file: File) => {
   try {
@@ -93,7 +174,7 @@ initDropZone(viewportPane, dropOverlay, fileInput, async (file: File) => {
     displayModel(model, file.name);
   } catch (err) {
     console.error('Failed to load STL:', err);
-    statusFile.textContent = `Error: ${(err as Error).message}`;
+    showError(`STL load failed: ${(err as Error).message}`);
   }
 });
 
@@ -101,9 +182,10 @@ initDropZone(viewportPane, dropOverlay, fileInput, async (file: File) => {
 
 document.querySelectorAll('.toolbar-btn[data-view]').forEach((btn) => {
   btn.addEventListener('click', () => {
-    if (!currentModel) return;
+    if (ctx.modelGroup.children.length === 0) return;
     const preset = (btn as HTMLElement).dataset.view as ViewPreset;
-    setView(preset, ctx.camera, controls, currentModel.bounds);
+    const bounds = new THREE.Box3().setFromObject(ctx.modelGroup);
+    setView(preset, ctx.camera, controls, bounds);
   });
 });
 
@@ -115,6 +197,10 @@ document.querySelector('.toolbar-btn[data-action="fit"]')?.addEventListener('cli
 
 document.querySelector('.toolbar-btn[data-action="load"]')?.addEventListener('click', () => {
   fileInput.click();
+});
+
+document.querySelector('.toolbar-btn[data-action="run"]')?.addEventListener('click', () => {
+  runCode(editor.state.doc.toString());
 });
 
 // Toggle buttons
@@ -140,16 +226,3 @@ document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
     }
   });
 });
-
-// ─── Auto-load demo bracket ───────────────────────────────────
-
-async function autoLoadDemo(): Promise<void> {
-  try {
-    const model = await loadSTLUrl('./bracket.stl');
-    displayModel(model, 'bracket.stl');
-  } catch {
-    // bracket.stl not available — that's fine
-  }
-}
-
-autoLoadDemo();
