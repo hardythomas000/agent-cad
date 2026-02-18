@@ -1,5 +1,10 @@
 {
   "name": "agent-cad",
   "private": true,
-  "workspaces": ["packages/*"]
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "dev:viewer": "npm run dev --workspace=@agent-cad/viewer"
+  }
 }

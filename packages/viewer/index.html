@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent CAD</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0a0c;
+      --panel: #18181c;
+      --border: #2a2a2e;
+      --border-subtle: #1f1f23;
+      --teal: #4a9e8e;
+      --teal-dim: rgba(74, 158, 142, 0.12);
+      --teal-glow: rgba(74, 158, 142, 0.25);
+      --gold: #c9a84c;
+      --gold-dim: rgba(201, 168, 76, 0.15);
+      --copper: #b87333;
+      --text: #e0e0e0;
+      --text-dim: #6a6a6e;
+      --font-display: 'DM Serif Display', serif;
+      --font-body: 'Source Serif 4', serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    #app {
+      display: flex;
+      height: 100vh;
+      width: 100vw;
+    }
+
+    /* ─── Editor pane ──────────────────────────── */
+
+    #editor-pane {
+      flex: 0 0 35%;
+      min-width: 200px;
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--border-subtle);
+    }
+
+    #editor-header {
+      padding: 14px 16px 10px;
+      font-family: var(--font-display);
+      font-size: 15px;
+      letter-spacing: 0.03em;
+      color: var(--teal);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      user-select: none;
+    }
+
+    #editor-header::before {
+      content: '';
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--teal);
+      box-shadow: 0 0 6px var(--teal-glow);
+      flex-shrink: 0;
+    }
+
+    #editor-container {
+      flex: 1;
+      overflow: hidden;
+    }
+
+    /* ─── Divider ──────────────────────────────── */
+
+    #divider {
+      width: 3px;
+      cursor: col-resize;
+      background: var(--border-subtle);
+      flex-shrink: 0;
+      transition: background 0.2s, box-shadow 0.2s;
+      position: relative;
+      z-index: 5;
+    }
+
+    #divider:hover,
+    #divider.active {
+      background: var(--teal);
+      box-shadow: 0 0 8px var(--teal-glow);
+    }
+
+    /* ─── Viewport pane ────────────────────────── */
+
+    #viewport-pane {
+      flex: 1;
+      position: relative;
+      overflow: hidden;
+      background: var(--bg);
+    }
+
+    #viewport-pane canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    /* ─── Toolbar ──────────────────────────────── */
+
+    #toolbar {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      display: flex;
+      gap: 3px;
+      flex-wrap: wrap;
+      max-width: 340px;
+      opacity: 0;
+      animation: fadeIn 0.5s ease 0.3s forwards;
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 1px;
+      background: var(--border);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-right: 4px;
+    }
+
+    .toolbar-btn {
+      background: rgba(24, 24, 28, 0.92);
+      border: none;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      padding: 5px 8px;
+      cursor: pointer;
+      transition: color 0.15s, background 0.15s;
+      white-space: nowrap;
+    }
+
+    .toolbar-group .toolbar-btn:first-child { border-radius: 4px 0 0 4px; }
+    .toolbar-group .toolbar-btn:last-child { border-radius: 0 4px 4px 0; }
+
+    .toolbar-btn:hover {
+      color: var(--teal);
+      background: rgba(74, 158, 142, 0.08);
+    }
+
+    .toolbar-btn.active {
+      color: var(--gold);
+      background: rgba(201, 168, 76, 0.08);
+    }
+
+    .toolbar-btn.standalone {
+      border-radius: 4px;
+      border: 1px solid var(--border);
+      padding: 5px 10px;
+    }
+
+    .toolbar-btn.standalone:hover {
+      border-color: var(--teal);
+    }
+
+    /* ─── Drop overlay ─────────────────────────── */
+
+    #drop-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 10, 12, 0.9);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 10;
+      pointer-events: none;
+      backdrop-filter: blur(4px);
+    }
+
+    #drop-overlay.visible { display: flex; }
+
+    #drop-overlay .drop-icon {
+      width: 48px;
+      height: 48px;
+      border: 2px dashed var(--teal);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--teal);
+      font-size: 24px;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+
+    #drop-overlay .drop-text {
+      font-family: var(--font-display);
+      font-size: 18px;
+      color: var(--teal);
+      letter-spacing: 0.02em;
+    }
+
+    #drop-overlay .drop-hint {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+
+    /* ─── Status bar ───────────────────────────── */
+
+    #status-bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      background: rgba(24, 24, 28, 0.9);
+      border-top: 1px solid var(--border-subtle);
+      padding: 5px 14px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.02em;
+      color: var(--text-dim);
+      display: flex;
+      gap: 20px;
+      backdrop-filter: blur(8px);
+      opacity: 0;
+      animation: fadeIn 0.5s ease 0.6s forwards;
+    }
+
+    #status-bar span { white-space: nowrap; }
+
+    #status-bar .status-label {
+      color: var(--teal);
+      opacity: 0.6;
+      margin-right: 4px;
+      text-transform: uppercase;
+      font-size: 9px;
+    }
+
+    /* ─── Empty state ──────────────────────────── */
+
+    #empty-state {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      pointer-events: none;
+      opacity: 0;
+      animation: fadeIn 0.8s ease 0.8s forwards;
+    }
+
+    #empty-state.hidden { display: none; }
+
+    #empty-state .empty-title {
+      font-family: var(--font-display);
+      font-size: 22px;
+      color: var(--text);
+      opacity: 0.2;
+      letter-spacing: 0.02em;
+    }
+
+    #empty-state .empty-hint {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      opacity: 0.4;
+    }
+
+    /* ─── Animations ───────────────────────────── */
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.5; transform: scale(1); }
+      50% { opacity: 1; transform: scale(1.05); }
+    }
+
+    /* ─── Scrollbar ────────────────────────────── */
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--teal); }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div id="editor-pane">
+      <div id="editor-header">agent-cad</div>
+      <div id="editor-container"></div>
+    </div>
+    <div id="divider"></div>
+    <div id="viewport-pane">
+      <div id="toolbar">
+        <div class="toolbar-group">
+          <button class="toolbar-btn" data-view="front">Front</button>
+          <button class="toolbar-btn" data-view="back">Back</button>
+          <button class="toolbar-btn" data-view="left">Left</button>
+          <button class="toolbar-btn" data-view="right">Right</button>
+          <button class="toolbar-btn" data-view="top">Top</button>
+          <button class="toolbar-btn" data-view="bottom">Btm</button>
+          <button class="toolbar-btn" data-view="iso">Iso</button>
+        </div>
+        <button class="toolbar-btn standalone" data-action="fit">Fit</button>
+        <div class="toolbar-group">
+          <button class="toolbar-btn" data-toggle="wireframe">Wire</button>
+          <button class="toolbar-btn active" data-toggle="grid">Grid</button>
+          <button class="toolbar-btn active" data-toggle="axes">Axes</button>
+        </div>
+        <button class="toolbar-btn standalone" data-action="load">Load STL</button>
+      </div>
+      <div id="empty-state">
+        <div class="empty-title">Drop an STL file to begin</div>
+        <div class="empty-hint">or click Load STL</div>
+      </div>
+      <div id="drop-overlay">
+        <div class="drop-icon">+</div>
+        <div class="drop-text">Drop STL File</div>
+        <div class="drop-hint">.stl binary or ASCII</div>
+      </div>
+      <div id="status-bar">
+        <span><span class="status-label">File</span> <span id="status-file">-</span></span>
+        <span><span class="status-label">Tris</span> <span id="status-tris">-</span></span>
+        <span><span class="status-label">Size</span> <span id="status-dims">-</span></span>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="file-input" accept=".stl" style="display: none" />
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
