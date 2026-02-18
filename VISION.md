@@ -345,11 +345,19 @@ These principles aren't theoretical — they're backed by emerging research:
 - [x] Token-native geometry theory paper (`docs/token-native-geometry-architecture.md`)
 - [x] Set up monorepo (npm workspaces, TypeScript)
 
-### Phase 1: The Viewer
-- [ ] Load and display STEP files (via occt-import-js, already proven in our viewer work)
-- [ ] Interactive 3D view with our aesthetic
-- [ ] Code editor pane (Monaco or CodeMirror) with our colour theme
-- [ ] Split-pane: code left, 3D right
+### Phase 1: The Viewer ✅
+- [ ] Load and display STEP files (via occt-import-js — deferred to Phase 5)
+- [x] Interactive 3D view with our aesthetic (dark charcoal, gold geometry, teal grid)
+- [x] Code editor pane (CodeMirror 6) with our colour theme
+- [x] Split-pane: code left, 3D right (draggable divider)
+- [x] Live code execution (300ms debounce, Ctrl+Enter)
+- [x] STL drag-and-drop loading
+- [x] View presets (Front/Back/Left/Right/Top/Bottom/Iso)
+- [x] Display modes (Shaded, S+Edge, S+Wire, Wireframe)
+- [x] Perspective/Orthographic camera toggle
+- [x] Grid + axes toggles
+- [x] Light/dark theme toggle
+- [x] Status bar (triangle count, dimensions)
 
 ### Phase 2: SDF Kernel ✅
 - [x] TypeScript geometry API (fluent, chainable) — `@agent-cad/sdf-kernel`
@@ -360,23 +368,26 @@ These principles aren't theoretical — they're backed by emerging research:
 - [x] Sphere tracing + bisection root finding
 - [x] Drop cutter (CAM primitive — Z-contact search)
 - [x] Structured readback (name, bounds, size, center)
-- [x] 82 tests passing
-- [ ] Mesh extraction (marching cubes)
-- [ ] Display SDF results in viewer
+- [x] 2D profiles: Polygon2D, Circle2D, Rect2D
+- [x] Extrude (2D→3D, exact Quilez formula)
+- [x] Revolve (2D→3D around Z axis)
+- [x] 169 tests passing
 
 ### Phase 3: Agent Layer ✅
-- [x] MCP server exposing 23 tools (`@agent-cad/mcp-server`)
+- [x] MCP server exposing 33 tools (`@agent-cad/mcp-server`)
 - [x] In-memory shape registry with auto/named IDs
+- [x] 2D profile registry (create, list, delete profiles)
 - [x] Every tool returns structured readback (the "kernel talks back" principle)
 - [x] Registered in Claude Code as MCP server
+- [x] First LLM-authored geometry: bracket with pocket + 2 through-holes (bracket.stl)
 - [ ] Natural language → geometry workflow testing
 - [ ] Agent loop: describe → generate → execute → verify → iterate
 - [ ] Setup sheet generation from machining context
 
-### Phase 4: Mesh Export & Visualization
-- [ ] Marching cubes (SDF → triangle mesh)
-- [ ] STL export
-- [ ] Three.js viewer integration (display SDF-derived meshes)
+### Phase 4: Mesh Export & Visualization ✅
+- [x] Marching cubes (SDF → triangle mesh)
+- [x] Binary STL export
+- [x] Three.js viewer integration (display SDF-derived meshes in real-time)
 - [ ] Agent-requested screenshot captures with face/edge annotations
 
 ### Phase 5: B-Rep Bridge

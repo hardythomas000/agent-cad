@@ -16,20 +16,24 @@ An SDF-based geometry kernel with an MCP server that lets LLMs author CAD geomet
 - `packages/sdf-kernel/src/api.ts` — Fluent API: `box()`, `sphere()`, `cylinder()`, `union()`, `subtract()`
 - `packages/sdf-kernel/src/marching-cubes.ts` — Mesh extraction
 - `packages/sdf-kernel/src/stl.ts` — Binary STL export
-- `packages/mcp-server/src/tools.ts` — 23 MCP tool definitions
+- `packages/mcp-server/src/tools.ts` — 33 MCP tool definitions
 - `packages/mcp-server/src/registry.ts` — In-memory shape registry with readback
 - `packages/viewer/src/main.ts` — Viewer entry point
 - `packages/viewer/src/scene.ts` — Three.js scene, lights, grid, axes
 - `packages/viewer/src/editor.ts` — CodeMirror 6 with teal/gold/copper theme
 
 ## MCP Server
-Registered in `~/.claude.json`. Exposes 23 tools:
+Registered in `~/.claude.json`. Exposes 33 tools:
 - **Primitives (6):** create_box, create_sphere, create_cylinder, create_cone, create_torus, create_plane
+- **2D Profiles (3):** create_polygon, create_circle_2d, create_rect_2d
+- **2D → 3D (2):** extrude, revolve
+- **Profile Management (2):** list_profiles, delete_profile
 - **Booleans (3):** boolean_union, boolean_subtract, boolean_intersect (all support smooth_radius for fillets)
 - **Transforms (4):** translate, rotate, scale_shape, mirror_shape
 - **Modifiers (3):** shell, round_edges, elongate
 - **Queries (3):** get_shape, evaluate_point, drop_cutter
 - **Mesh (2):** compute_mesh, export_mesh
+- **CAM (3):** define_tool, generate_surfacing_toolpath, export_gcode
 - **Session (2):** list_shapes, delete_shape
 
 Every tool returns structured JSON readback (shape_id, type, bounds, size, center) — the LLM's "eyes" since it can't see the 3D viewer.
@@ -39,7 +43,7 @@ Every tool returns structured JSON readback (shape_id, type, bounds, size, cente
 # Build everything
 npm run build
 
-# Run tests (104 passing)
+# Run tests (169+ passing)
 npm test
 
 # Build just the kernel
@@ -56,16 +60,18 @@ npm run dev:viewer
 # or: cd packages/viewer && npm run dev
 ```
 
-## Status (as of 2026-02-18)
+## Status (as of 2026-02-19)
 ### Done
 - SDF kernel with 6 primitives, 3 booleans (+ smooth variants), 4 transforms, 3 modifiers
+- 2D profiles: polygon, circle2d, rect2d + extrude/revolve (drawing→SDF bridge)
 - Marching cubes mesh extraction
 - Binary STL export
-- MCP server with 23 tools
+- MCP server with 33 tools (incl. 2D profiles, CAM, G-code)
 - Shape registry with structured readback
 - Root finding (sphere tracing + bisection)
-- Drop cutter (CAM toolpath query)
-- 104 tests passing
+- 3-axis raster surfacing toolpath (drop-cutter based)
+- Fanuc G-code emission
+- 169+ tests passing
 - First LLM-authored geometry demo: bracket with pocket + 2 through-holes (bracket.stl)
 - Viewer v1: Three.js STL viewer + CodeMirror 6 editor + split pane (Vite app)
 - Viewer v2: live kernel connection — editor DSL executes against kernel, mesh renders in viewport (debounced, Ctrl+Enter, error overlay)
@@ -73,7 +79,6 @@ npm run dev:viewer
 ### Not Started
 - Semantic DSL (constraint solver, named topology)
 - B-Rep export (STEP/IGES via OCCT)
-- Toolpath generation (beyond drop_cutter)
 - Benchmark gates (ADR-001 pattern)
 - Validation pipeline
 
