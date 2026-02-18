@@ -349,6 +349,42 @@
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--teal); }
+
+    /* ─── Light theme overrides ────────────────── */
+
+    [data-theme="light"] {
+      --bg: #f0f0f2;
+      --panel: #ffffff;
+      --border: #d8d8dc;
+      --border-subtle: #e8e8ec;
+      --teal: #2a7a6a;
+      --teal-dim: rgba(42, 122, 106, 0.1);
+      --teal-glow: rgba(42, 122, 106, 0.2);
+      --gold: #9a7a20;
+      --gold-dim: rgba(154, 122, 32, 0.1);
+      --copper: #a06020;
+      --text: #2a2a2e;
+      --text-dim: #888890;
+    }
+
+    [data-theme="light"] .toolbar-btn {
+      background: rgba(255, 255, 255, 0.92);
+      color: #888890;
+    }
+
+    [data-theme="light"] .toolbar-btn:hover {
+      color: var(--teal);
+      background: rgba(42, 122, 106, 0.06);
+    }
+
+    [data-theme="light"] #status-bar {
+      background: rgba(255, 255, 255, 0.9);
+    }
+
+    [data-theme="light"] #editor-error {
+      background: rgba(200, 60, 60, 0.08);
+      border-top-color: rgba(200, 60, 60, 0.2);
+    }
   </style>
 </head>
 <body>
@@ -372,9 +408,10 @@
         </div>
         <button class="toolbar-btn standalone" data-action="fit">Fit</button>
         <div class="toolbar-group">
-          <button class="toolbar-btn" data-toggle="wireframe">Wire</button>
+          <button class="toolbar-btn" data-toggle="wireframe">Shade</button>
           <button class="toolbar-btn active" data-toggle="grid">Grid</button>
           <button class="toolbar-btn active" data-toggle="axes">Axes</button>
+          <button class="toolbar-btn" data-toggle="theme">Light</button>
         </div>
         <button class="toolbar-btn standalone" data-action="run" title="Ctrl+Enter">Run</button>
         <button class="toolbar-btn standalone" data-action="load">Load STL</button>

@@ -3,7 +3,7 @@
  */
 
 import * as THREE from 'three';
-import { HEX } from './theme.js';
+import { HEX, onThemeChange } from './theme.js';
 
 export interface SceneContext {
   scene: THREE.Scene;
@@ -53,7 +53,7 @@ export function initScene(container: HTMLElement): SceneContext {
 
   // Grid
   const gridHelper = new THREE.GridHelper(500, 50, HEX.grid, HEX.grid);
-  gridHelper.material.opacity = 0.12;
+  gridHelper.material.opacity = HEX.gridOpacity;
   (gridHelper.material as THREE.Material).transparent = true;
   scene.add(gridHelper);
 
@@ -68,6 +68,15 @@ export function initScene(container: HTMLElement): SceneContext {
   // Edge group (wireframe overlays)
   const edgeGroup = new THREE.Group();
   scene.add(edgeGroup);
+
+  // React to theme changes
+  onThemeChange(() => {
+    renderer.setClearColor(HEX.bg);
+    scene.background = new THREE.Color(HEX.bg);
+    ambient.color.set(HEX.ambient);
+    gridHelper.material.opacity = HEX.gridOpacity;
+    (gridHelper.material as any).color?.set(HEX.grid);
+  });
 
   // Resize handling
   const resize = () => {

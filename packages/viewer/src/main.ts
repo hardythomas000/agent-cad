@@ -12,6 +12,7 @@ import { initDropZone } from './drop-zone.js';
 import { loadSTLFile, type LoadedModel } from './stl-loader.js';
 import { setView, fitCamera, type ViewPreset } from './view-presets.js';
 import { executeCode, isError, type ExecuteSuccess } from './kernel-bridge.js';
+import { getTheme, setTheme, onThemeChange, type ThemeMode } from './theme.js';
 
 // ─── DOM elements ──────────────────────────────────────────────
 
@@ -38,10 +39,43 @@ startRenderLoop(ctx.renderer, ctx.scene, ctx.camera, () => {
 
 // ─── Model state ───────────────────────────────────────────────
 
-let showWireframe = false;
+type DisplayMode = 'shaded' | 'shaded-wire' | 'wire';
+let displayMode: DisplayMode = 'shaded';
 let showGrid = true;
 let showAxes = true;
 let firstRender = true;
+
+function applyDisplayMode(): void {
+  switch (displayMode) {
+    case 'shaded':
+      ctx.modelGroup.visible = true;
+      ctx.edgeGroup.visible = false;
+      break;
+    case 'shaded-wire':
+      ctx.modelGroup.visible = true;
+      ctx.edgeGroup.visible = true;
+      setEdgeOpacity(0.5);
+      break;
+    case 'wire':
+      ctx.modelGroup.visible = false;
+      ctx.edgeGroup.visible = true;
+      setEdgeOpacity(1.0);
+      break;
+  }
+}
+
+function setEdgeOpacity(opacity: number): void {
+  for (const child of ctx.edgeGroup.children) {
+    if (child instanceof THREE.LineSegments) {
+      const mat = child.material as THREE.LineBasicMaterial;
+      mat.opacity = opacity;
+      mat.transparent = opacity < 1;
+    }
+  }
+}
+
+// Initial state
+applyDisplayMode();
 
 /** Dispose GPU resources (geometry + material) for all children, then clear. */
 function disposeGroup(group: THREE.Group): void {
@@ -62,7 +96,7 @@ function displayModel(model: LoadedModel, filename: string): void {
 
   ctx.modelGroup.add(model.mesh);
   ctx.edgeGroup.add(model.edges);
-  model.edges.visible = showWireframe;
+  applyDisplayMode();
 
   emptyState.classList.add('hidden');
   fitCamera(ctx.camera, controls, ctx.modelGroup);
@@ -83,7 +117,7 @@ function displayGeometry(result: ExecuteSuccess): void {
 
   ctx.modelGroup.add(result.mesh);
   ctx.edgeGroup.add(result.edges);
-  result.edges.visible = showWireframe;
+  applyDisplayMode();
 
   emptyState.classList.add('hidden');
 
@@ -142,8 +176,8 @@ const editor = initEditor(editorContainer, (code) => {
   debouncedRun(code);
 });
 
-// Run the initial default code on startup
-runCode(editor.state.doc.toString());
+// Run the initial default code after UI paints
+requestAnimationFrame(() => runCode(editor.state.doc.toString()));
 
 // ─── Ctrl+Enter to run immediately ─────────────────────────────
 
@@ -203,16 +237,45 @@ document.querySelector('.toolbar-btn[data-action="run"]')?.addEventListener('cli
   runCode(editor.state.doc.toString());
 });
 
-// Toggle buttons
+// Display mode cycle: Shaded → Shaded+Wire → Wire → Shaded
+const DISPLAY_MODES: DisplayMode[] = ['shaded', 'shaded-wire', 'wire'];
+const DISPLAY_LABELS: Record<DisplayMode, string> = {
+  'shaded': 'Shade',
+  'shaded-wire': 'S+W',
+  'wire': 'Wire',
+};
+const wireBtn = document.querySelector('.toolbar-btn[data-toggle="wireframe"]');
+wireBtn?.addEventListener('click', () => {
+  const idx = DISPLAY_MODES.indexOf(displayMode);
+  displayMode = DISPLAY_MODES[(idx + 1) % DISPLAY_MODES.length];
+  applyDisplayMode();
+  wireBtn.textContent = DISPLAY_LABELS[displayMode];
+  wireBtn.classList.toggle('active', displayMode !== 'shaded');
+});
+
+// Theme toggle
+const themeBtn = document.querySelector('.toolbar-btn[data-toggle="theme"]');
+themeBtn?.addEventListener('click', () => {
+  const next: ThemeMode = getTheme() === 'dark' ? 'light' : 'dark';
+  setTheme(next);
+});
+
+onThemeChange((mode) => {
+  document.documentElement.setAttribute('data-theme', mode);
+  themeBtn?.classList.toggle('active', mode === 'light');
+  // Re-run code to pick up new material colors
+  runCode(editor.state.doc.toString());
+});
+
+// Apply saved theme on load
+document.documentElement.setAttribute('data-theme', getTheme());
+
+// Toggle buttons (grid, axes)
 document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
+  const toggle = (btn as HTMLElement).dataset.toggle;
+  if (toggle === 'wireframe' || toggle === 'theme') return; // handled above
   btn.addEventListener('click', () => {
-    const toggle = (btn as HTMLElement).dataset.toggle;
     switch (toggle) {
-      case 'wireframe':
-        showWireframe = !showWireframe;
-        ctx.edgeGroup.visible = showWireframe;
-        btn.classList.toggle('active', showWireframe);
-        break;
       case 'grid':
         showGrid = !showGrid;
         ctx.gridHelper.visible = showGrid;

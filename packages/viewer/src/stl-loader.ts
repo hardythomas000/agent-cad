@@ -31,14 +31,14 @@ export function loadSTLBuffer(buffer: ArrayBuffer): LoadedModel {
 
   const mesh = new THREE.Mesh(geometry, material);
 
-  // Teal edge lines
-  const edgeGeo = new THREE.EdgesGeometry(geometry, 30);
-  const edgeMat = new THREE.LineBasicMaterial({
+  // Wireframe — all triangle edges
+  const wireGeo = new THREE.WireframeGeometry(geometry);
+  const wireMat = new THREE.LineBasicMaterial({
     color: HEX.wireframe,
-    opacity: 0.3,
+    opacity: 0.5,
     transparent: true,
   });
-  const edges = new THREE.LineSegments(edgeGeo, edgeMat);
+  const edges = new THREE.LineSegments(wireGeo, wireMat);
 
   const bounds = new THREE.Box3().setFromBufferAttribute(
     geometry.getAttribute('position') as THREE.BufferAttribute,
