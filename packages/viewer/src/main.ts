@@ -11,7 +11,7 @@ import { initSplitPane } from './split-pane.js';
 import { initDropZone } from './drop-zone.js';
 import { loadSTLFile, type LoadedModel } from './stl-loader.js';
 import { setView, fitCamera, type ViewPreset } from './view-presets.js';
-import { executeCode, isError, type ExecuteSuccess } from './kernel-bridge.js';
+import { executeCode, isError, getToolpathVisual, getGCodeText, type ExecuteSuccess } from './kernel-bridge.js';
 import { getTheme, setTheme, onThemeChange, type ThemeMode } from './theme.js';
 
 // ─── DOM elements ──────────────────────────────────────────────
@@ -27,6 +27,7 @@ const statusTris = document.getElementById('status-tris')!;
 const statusDims = document.getElementById('status-dims')!;
 const emptyState = document.getElementById('empty-state')!;
 const editorError = document.getElementById('editor-error')!;
+const gcodeContent = document.getElementById('gcode-content')!;
 
 // ─── Scene + controls ──────────────────────────────────────────
 
@@ -44,6 +45,7 @@ let displayMode: DisplayMode = 'shaded';
 let cameraType: 'perspective' | 'orthographic' = 'perspective';
 let showGrid = true;
 let showAxes = true;
+let showToolpathLines = true;
 let firstRender = true;
 
 function applyDisplayMode(): void {
@@ -106,6 +108,7 @@ function displayModel(model: LoadedModel, filename: string): void {
   disposeGroup(ctx.modelGroup);
   disposeGroup(ctx.edgeGroup);
   disposeGroup(ctx.wireGroup);
+  disposeGroup(ctx.toolpathGroup);
 
   ctx.modelGroup.add(model.mesh);
   ctx.edgeGroup.add(model.edges);
@@ -164,10 +167,26 @@ function showError(msg: string): void {
 
 function runCode(code: string): void {
   const result = executeCode(code);
+  // Always dispose and re-populate toolpath group
+  disposeGroup(ctx.toolpathGroup);
   if (isError(result)) {
     showError(result.error);
   } else {
     displayGeometry(result);
+    const tpVisual = getToolpathVisual();
+    if (tpVisual) {
+      ctx.toolpathGroup.add(tpVisual);
+      ctx.toolpathGroup.visible = showToolpathLines;
+    }
+  }
+  // G-code readout — auto-show/hide
+  const gcode = getGCodeText();
+  if (gcode) {
+    gcodeContent.textContent = gcode;
+    gcodeContent.classList.add('visible');
+  } else {
+    gcodeContent.textContent = '';
+    gcodeContent.classList.remove('visible');
   }
 }
 
@@ -320,6 +339,11 @@ document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
         showAxes = !showAxes;
         ctx.axesHelper.visible = showAxes;
         btn.classList.toggle('active', showAxes);
+        break;
+      case 'toolpath':
+        showToolpathLines = !showToolpathLines;
+        ctx.toolpathGroup.visible = showToolpathLines;
+        btn.classList.toggle('active', showToolpathLines);
         break;
     }
   });

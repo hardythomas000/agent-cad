@@ -14,6 +14,7 @@ export interface SceneContext {
   modelGroup: THREE.Group;
   edgeGroup: THREE.Group;     // hard edges
   wireGroup: THREE.Group;     // full wireframe
+  toolpathGroup: THREE.Group; // CAM toolpath lines
   gridHelper: THREE.GridHelper;
   axesHelper: THREE.AxesHelper;
   setCamera: (type: 'perspective' | 'orthographic') => void;
@@ -103,6 +104,8 @@ export function initScene(container: HTMLElement): SceneContext {
   scene.add(edgeGroup);
   const wireGroup = new THREE.Group();
   scene.add(wireGroup);
+  const toolpathGroup = new THREE.Group();
+  scene.add(toolpathGroup);
 
   // React to theme changes
   onThemeChange(() => {
@@ -133,7 +136,7 @@ export function initScene(container: HTMLElement): SceneContext {
 
   const ctx: SceneContext = {
     scene, perspCamera, orthoCamera, activeCamera, renderer,
-    modelGroup, edgeGroup, wireGroup, gridHelper, axesHelper, setCamera,
+    modelGroup, edgeGroup, wireGroup, toolpathGroup, gridHelper, axesHelper, setCamera,
   };
   return ctx;
 }

@@ -322,6 +322,26 @@
 
     #editor-error.visible { display: block; }
 
+    /* ─── G-code readout panel ─────────────────── */
+
+    #gcode-content {
+      overflow: auto;
+      padding: 8px 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text);
+      margin: 0;
+      white-space: pre;
+      border-top: 1px solid var(--border);
+      max-height: 35%;
+      display: none;
+    }
+
+    #gcode-content.visible {
+      display: block;
+    }
+
     /* ─── Live indicator ──────────────────────── */
 
     .status-live {
@@ -393,6 +413,7 @@
       <div id="editor-header">agent-cad</div>
       <div id="editor-container"></div>
       <div id="editor-error"></div>
+      <pre id="gcode-content"></pre>
     </div>
     <div id="divider"></div>
     <div id="viewport-pane">
@@ -413,6 +434,7 @@
           <button class="toolbar-btn active" data-toggle="axes">Axes</button>
           <button class="toolbar-btn" data-toggle="camera">Persp</button>
           <button class="toolbar-btn" data-toggle="theme">Light</button>
+          <button class="toolbar-btn active" data-toggle="toolpath">Path</button>
         </div>
         <button class="toolbar-btn standalone" data-action="run" title="Ctrl+Enter">Run</button>
         <button class="toolbar-btn standalone" data-action="load">Load STL</button>

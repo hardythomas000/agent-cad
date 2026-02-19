@@ -106,9 +106,14 @@ const lightHighlight = HighlightStyle.define([
 const DEFAULT_CODE = `// Agent CAD — live editor
 // Edit code below, geometry updates in real-time.
 
-const shape = box(50, 50, 50)
+const plate = box(150, 20, 80)
+const drill = cylinder(5, 30).rotateX(90)
 
-computeMesh(shape, 2.0)
+const shape = plate
+  .subtract(drill.translate(50, 0, 0))
+  .subtract(drill.translate(-50, 0, 0))
+
+computeMesh(shape, 1.0)
 `;
 
 // ─── Init ─────────────────────────────────────────────────

@@ -10,10 +10,17 @@ import {
   polygon, circle2d, rect2d, extrude, revolve,
   union, subtract, intersect,
   marchingCubes,
+  generateRasterSurfacing,
+  emitFanucGCode,
+  hole,
   type SDF2D,
   type TriangleMesh,
+  type ToolDefinition,
+  type ToolpathParams,
+  type HoleOptions,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
+import { renderToolpath } from './toolpath-renderer.js';
 
 export interface ExecuteSuccess {
   geometry: THREE.BufferGeometry;
@@ -32,6 +39,21 @@ export type ExecuteResult = ExecuteSuccess | ExecuteError;
 
 export function isError(r: ExecuteResult): r is ExecuteError {
   return 'error' in r;
+}
+
+// ─── Toolpath + G-code state (module-level stashing) ────────────
+
+let toolpathVisual: THREE.LineSegments | null = null;
+let gcodeText: string | null = null;
+
+/** Get the toolpath visual from the last executeCode() call, if any. */
+export function getToolpathVisual(): THREE.LineSegments | null {
+  return toolpathVisual;
+}
+
+/** Get the G-code text from the last executeCode() call, if any. */
+export function getGCodeText(): string | null {
+  return gcodeText;
 }
 
 // All SDF prototype methods that return new SDF nodes.
@@ -57,6 +79,8 @@ const SDF_METHODS = [
 export function executeCode(code: string): ExecuteResult {
   let lastSDF: SDF | null = null;
   let meshResult: TriangleMesh | null = null;
+  toolpathVisual = null; // Reset each execution
+  gcodeText = null;
 
   // Patch SDF.prototype methods to track the last SDF produced
   const originals = new Map<string, Function>();
@@ -93,6 +117,9 @@ export function executeCode(code: string): ExecuteResult {
     const _extrude = (profile: SDF2D, height: number) => track(extrude(profile, height));
     const _revolve = (profile: SDF2D, offset?: number) => track(revolve(profile, offset));
 
+    // Semantic feature constructors
+    const _hole = (shape: SDF, face: string, opts: HoleOptions) => track(hole(shape, face, opts));
+
     // computeMesh — explicit mesh generation
     const computeMesh = (shape: SDF, resolution = 2.0): TriangleMesh => {
       const m = marchingCubes(shape, resolution);
@@ -103,11 +130,40 @@ export function executeCode(code: string): ExecuteResult {
     // exportSTL — no-op in viewer (just returns null to avoid errors)
     const _exportSTL = () => null;
 
+    // defineTool — create a ToolDefinition for CAM
+    const _defineTool = (opts: { type: 'ballnose'; diameter: number; flute_length?: number; shank_diameter?: number }): ToolDefinition => {
+      return {
+        name: 'tool',
+        type: opts.type,
+        diameter: opts.diameter,
+        radius: opts.diameter / 2,
+        flute_length: opts.flute_length,
+        shank_diameter: opts.shank_diameter,
+      };
+    };
+
+    // showToolpath — generate and render a surfacing toolpath
+    const _showToolpath = (shape: SDF, tool: ToolDefinition, params: Partial<ToolpathParams> & { feed_rate: number; rpm: number; safe_z: number }) => {
+      const fullParams: ToolpathParams = {
+        direction: 'x',
+        stepover_pct: 15,
+        zigzag: true,
+        ...params,
+      };
+      const tp = generateRasterSurfacing(shape, tool, fullParams);
+      const result = { ...tp, id: 'live' };
+      toolpathVisual = renderToolpath(result);
+      gcodeText = emitFanucGCode(result);
+      console.log('Toolpath stats:', result.stats);
+    };
+
     const fn = new Function(
       'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
       'polygon', 'circle2d', 'rect2d', 'extrude', 'revolve',
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
+      'defineTool', 'showToolpath',
+      'hole',
       code,
     );
 
@@ -116,6 +172,8 @@ export function executeCode(code: string): ExecuteResult {
       _polygon, _circle2d, _rect2d, _extrude, _revolve,
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
+      _defineTool, _showToolpath,
+      _hole,
     );
 
     // If computeMesh was called explicitly, use that result

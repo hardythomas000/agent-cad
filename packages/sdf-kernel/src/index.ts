@@ -36,6 +36,10 @@ export { generateRasterSurfacing } from './toolpath.js';
 export type { GCodeConfig } from './gcode.js';
 export { emitFanucGCode } from './gcode.js';
 
+// Feature constructors (semantic DSL)
+export { hole } from './features.js';
+export type { HoleOptions } from './features.js';
+
 // Node classes (for advanced use / type checking)
 export {
   Sphere, Box, Cylinder, Cone, Torus, Plane,
