@@ -226,13 +226,15 @@ export abstract class SDF {
 
   /** Get edge at intersection of two named faces. */
   edge(face1: string, face2: string): EdgeDescriptor {
-    const e = this.edges().find(ed =>
+    const all = this.edges();
+    const e = all.find(ed =>
       (ed.faces[0] === face1 && ed.faces[1] === face2) ||
       (ed.faces[0] === face2 && ed.faces[1] === face1)
     );
     if (!e) {
       throw new Error(
-        `Edge between "${face1}" and "${face2}" not found.`
+        `Edge between "${face1}" and "${face2}" not found. ` +
+        `This shape has ${all.length} edge(s): [${all.map(ed => ed.name).join(', ')}]`
       );
     }
     return e;
@@ -472,19 +474,46 @@ export class Plane extends SDF {
 
 // ─── Boolean operations ────────────────────────────────────────
 
+/** Check if two SDF nodes have face name collisions. Used by mergeFaces() and mergeEdges(). */
+function hasFaceNameCollision(a: SDF, b: SDF): boolean {
+  const aNames = new Set(a.faces().map(f => f.name));
+  return b.faces().some(f => aNames.has(f.name));
+}
+
 /** Merge faces from two children, prefixing with a./b. on name collision. */
 function mergeFaces(a: SDF, b: SDF): FaceDescriptor[] {
   const aFaces = a.faces();
   const bFaces = b.faces();
-  const aNames = new Set(aFaces.map(f => f.name));
-  const hasCollision = bFaces.some(f => aNames.has(f.name));
-  if (hasCollision) {
+  if (hasFaceNameCollision(a, b)) {
     return [
       ...aFaces.map(f => ({ ...f, name: `a.${f.name}` })),
       ...bFaces.map(f => ({ ...f, name: `b.${f.name}` })),
     ];
   }
   return [...aFaces, ...bFaces];
+}
+
+/** Merge edges from two children, prefixing with a./b. on face name collision.
+ *  Uses face-level collision detection (same trigger as mergeFaces) because
+ *  edge names and face references derive from face names. */
+function mergeEdges(a: SDF, b: SDF): EdgeDescriptor[] {
+  const aEdges = a.edges();
+  const bEdges = b.edges();
+  if (hasFaceNameCollision(a, b)) {
+    return [
+      ...aEdges.map(e => ({
+        ...e,
+        name: `a.${e.name}`,
+        faces: [`a.${e.faces[0]}`, `a.${e.faces[1]}`] as [string, string],
+      })),
+      ...bEdges.map(e => ({
+        ...e,
+        name: `b.${e.name}`,
+        faces: [`b.${e.faces[0]}`, `b.${e.faces[1]}`] as [string, string],
+      })),
+    ];
+  }
+  return [...aEdges, ...bEdges];
 }
 
 export class Union extends SDF {
@@ -502,9 +531,7 @@ export class Union extends SDF {
     };
   }
   faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
-  edges(): EdgeDescriptor[] {
-    return [...this.a.edges(), ...this.b.edges()];
-  }
+  edges(): EdgeDescriptor[] { return mergeEdges(this.a, this.b); }
   classifyPoint(p: Vec3): string | null {
     const dA = this.a.evaluate(p);
     const dB = this.b.evaluate(p);
@@ -579,9 +606,7 @@ export class Intersect extends SDF {
     };
   }
   faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
-  edges(): EdgeDescriptor[] {
-    return [...this.a.edges(), ...this.b.edges()];
-  }
+  edges(): EdgeDescriptor[] { return mergeEdges(this.a, this.b); }
   classifyPoint(p: Vec3): string | null {
     const dA = this.a.evaluate(p);
     const dB = this.b.evaluate(p);
@@ -618,6 +643,7 @@ export class SmoothUnion extends SDF {
     };
   }
   faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  edges(): EdgeDescriptor[] { return mergeEdges(this.a, this.b); }
   classifyPoint(p: Vec3): string | null {
     const dA = this.a.evaluate(p);
     const dB = this.b.evaluate(p);
@@ -653,6 +679,18 @@ export class SmoothSubtract extends SDF {
     }));
     return [...aFaces, ...bFaces];
   }
+  edges(): EdgeDescriptor[] {
+    const aEdges = this.a.edges();
+    const bEdges = this.b.edges().map(e => ({
+      ...e,
+      name: `${this.resolvedFeatureName}.${e.name}`,
+      faces: [
+        `${this.resolvedFeatureName}.${e.faces[0]}`,
+        `${this.resolvedFeatureName}.${e.faces[1]}`,
+      ] as [string, string],
+    }));
+    return [...aEdges, ...bEdges];
+  }
   classifyPoint(p: Vec3): string | null {
     const dA = this.a.evaluate(p);
     const dB = this.b.evaluate(p);
@@ -680,6 +718,7 @@ export class SmoothIntersect extends SDF {
     };
   }
   faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  edges(): EdgeDescriptor[] { return mergeEdges(this.a, this.b); }
   classifyPoint(p: Vec3): string | null {
     const dA = this.a.evaluate(p);
     const dB = this.b.evaluate(p);
@@ -887,6 +926,21 @@ export class Shell extends SDF {
         ...f,
         name: `inner_${f.name}`,
         normal: [-f.normal[0], -f.normal[1], -f.normal[2]] as Vec3,
+      })),
+    ];
+  }
+  edges(): EdgeDescriptor[] {
+    const childEdges = this.child.edges();
+    return [
+      ...childEdges.map(e => ({
+        ...e,
+        name: `outer_${e.name}`,
+        faces: [`outer_${e.faces[0]}`, `outer_${e.faces[1]}`] as [string, string],
+      })),
+      ...childEdges.map(e => ({
+        ...e,
+        name: `inner_${e.name}`,
+        faces: [`inner_${e.faces[0]}`, `inner_${e.faces[1]}`] as [string, string],
       })),
     ];
   }

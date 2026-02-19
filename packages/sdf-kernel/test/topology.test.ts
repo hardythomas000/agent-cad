@@ -4,7 +4,7 @@ import {
   circle2d, rect2d, polygon, extrude, revolve,
 } from '../src/index.js';
 import type { Vec3 } from '../src/index.js';
-import type { FaceDescriptor } from '../src/topology.js';
+import type { FaceDescriptor, EdgeDescriptor } from '../src/topology.js';
 
 // ─── Helpers ──────────────────────────────────────────────────
 
@@ -632,5 +632,218 @@ describe('Edge cases', () => {
   it('children() returns child for modifiers', () => {
     const b = box(10, 10, 10).shell(1);
     expect(b.children()).toHaveLength(1);
+  });
+});
+
+// ─── Edge Topology Completion ─────────────────────────────────
+
+function edgeNames(shape: { edges(): EdgeDescriptor[] }): string[] {
+  return shape.edges().map(e => e.name).sort();
+}
+
+describe('Edge collision handling (mergeEdges)', () => {
+  it('Union of two boxes prefixes edge names with a./b.', () => {
+    const a = box(10, 10, 10);
+    const b = box(20, 20, 20);
+    const u = a.union(b);
+    const edges = u.edges();
+    // 12 + 12 = 24 edges total
+    expect(edges).toHaveLength(24);
+    // All edge names should start with a. or b.
+    for (const e of edges) {
+      expect(e.name).toMatch(/^[ab]\./);
+    }
+  });
+
+  it('Union of two boxes prefixes face references in edges', () => {
+    const a = box(10, 10, 10);
+    const b = box(20, 20, 20);
+    const u = a.union(b);
+    const edges = u.edges();
+    for (const e of edges) {
+      expect(e.faces[0]).toMatch(/^[ab]\./);
+      expect(e.faces[1]).toMatch(/^[ab]\./);
+    }
+  });
+
+  it('Union of box + sphere has no collision — no prefixing', () => {
+    const b = box(10, 10, 10);
+    const s = sphere(5);
+    const u = b.union(s);
+    const edges = u.edges();
+    // 12 box edges + 0 sphere edges = 12
+    expect(edges).toHaveLength(12);
+    // No prefixing
+    expect(edges[0].name).not.toMatch(/^[ab]\./);
+  });
+
+  it('Intersect of two boxes prefixes edge names with a./b.', () => {
+    const a = box(10, 10, 10);
+    const b = box(20, 20, 20);
+    const i = a.intersect(b);
+    const edges = i.edges();
+    expect(edges).toHaveLength(24);
+    for (const e of edges) {
+      expect(e.name).toMatch(/^[ab]\./);
+    }
+  });
+
+  it('Intersect of box + sphere has no collision — no prefixing', () => {
+    const b = box(10, 10, 10);
+    const s = sphere(5);
+    const i = b.intersect(s);
+    expect(i.edges()).toHaveLength(12);
+  });
+});
+
+describe('Smooth boolean edge propagation', () => {
+  it('SmoothUnion propagates edges like Union', () => {
+    const a = box(10, 10, 10);
+    const s = sphere(5);
+    const su = a.smoothUnion(s, 2);
+    expect(su.edges()).toHaveLength(12);
+  });
+
+  it('SmoothUnion with collision prefixes edges', () => {
+    const a = box(10, 10, 10);
+    const b = box(20, 20, 20);
+    const su = a.smoothUnion(b, 2);
+    expect(su.edges()).toHaveLength(24);
+    for (const e of su.edges()) {
+      expect(e.name).toMatch(/^[ab]\./);
+      expect(e.faces[0]).toMatch(/^[ab]\./);
+    }
+  });
+
+  it('SmoothSubtract prefixes edges with feature name', () => {
+    const b = box(100, 60, 30);
+    const c = cylinder(5, 40);
+    const result = b.smoothSubtract(c, 2, 'pocket');
+    const edges = result.edges();
+    // 12 box edges + 2 cylinder arc edges = 14
+    expect(edges).toHaveLength(14);
+    // Cylinder edges should be prefixed
+    const pocketEdges = edges.filter(e => e.name.startsWith('pocket.'));
+    expect(pocketEdges).toHaveLength(2);
+    // Face references should also be prefixed
+    for (const e of pocketEdges) {
+      expect(e.faces[0]).toMatch(/^pocket\./);
+      expect(e.faces[1]).toMatch(/^pocket\./);
+    }
+  });
+
+  it('SmoothIntersect propagates edges like Intersect', () => {
+    const b = box(10, 10, 10);
+    const s = sphere(5);
+    const si = b.smoothIntersect(s, 2);
+    expect(si.edges()).toHaveLength(12);
+  });
+});
+
+describe('Shell edge doubling', () => {
+  it('Shell doubles edges with outer_/inner_ prefixes', () => {
+    const b = box(10, 10, 10);
+    const s = b.shell(1);
+    const edges = s.edges();
+    // 12 * 2 = 24 edges
+    expect(edges).toHaveLength(24);
+  });
+
+  it('Shell edge names have correct prefixes', () => {
+    const b = box(10, 10, 10);
+    const s = b.shell(1);
+    const edges = s.edges();
+    const outerEdges = edges.filter(e => e.name.startsWith('outer_'));
+    const innerEdges = edges.filter(e => e.name.startsWith('inner_'));
+    expect(outerEdges).toHaveLength(12);
+    expect(innerEdges).toHaveLength(12);
+  });
+
+  it('Shell edge face references match shell face names', () => {
+    const b = box(10, 10, 10);
+    const s = b.shell(1);
+    const fNames = new Set(s.faces().map(f => f.name));
+    for (const e of s.edges()) {
+      expect(fNames.has(e.faces[0])).toBe(true);
+      expect(fNames.has(e.faces[1])).toBe(true);
+    }
+  });
+
+  it('Shell of cylinder doubles 2 edges to 4', () => {
+    const c = cylinder(5, 10);
+    const s = c.shell(1);
+    expect(s.edges()).toHaveLength(4);
+  });
+});
+
+describe('Edge error messages', () => {
+  it('edge() error includes available edge names', () => {
+    const b = box(10, 10, 10);
+    expect(() => b.edge('top', 'nonexistent')).toThrow(/12 edge/);
+    expect(() => b.edge('top', 'nonexistent')).toThrow(/top\.front/);
+  });
+
+  it('edge() error on edgeless shape shows 0 edges', () => {
+    const s = sphere(5);
+    expect(() => s.edge('surface', 'surface')).toThrow(/0 edge/);
+  });
+
+  it('edge() bidirectional lookup works', () => {
+    const b = box(10, 10, 10);
+    const e1 = b.edge('top', 'front');
+    const e2 = b.edge('front', 'top');
+    expect(e1.name).toBe(e2.name);
+  });
+});
+
+describe('Transform edge propagation', () => {
+  it('Translate shifts edge midpoints', () => {
+    const b = box(10, 10, 10).translate(100, 200, 300);
+    const e = b.edge('top', 'front');
+    // Original midpoint is [0, 5, 5], translated by [100, 200, 300]
+    expect(e.midpoint![0]).toBeCloseTo(100);
+    expect(e.midpoint![1]).toBeCloseTo(205);
+    expect(e.midpoint![2]).toBeCloseTo(305);
+  });
+
+  it('Scale scales edge midpoints', () => {
+    const b = box(10, 10, 10).scale(2);
+    const e = b.edge('top', 'front');
+    // Original midpoint is [0, 5, 5], scaled by 2
+    expect(e.midpoint![0]).toBeCloseTo(0);
+    expect(e.midpoint![1]).toBeCloseTo(10);
+    expect(e.midpoint![2]).toBeCloseTo(10);
+  });
+
+  it('Translate preserves edge count', () => {
+    const b = box(10, 10, 10).translate(5, 5, 5);
+    expect(b.edges()).toHaveLength(12);
+  });
+});
+
+describe('Chained edge propagation', () => {
+  it('box.subtract(cyl).shell() propagates edges through chain', () => {
+    const b = box(100, 60, 30);
+    const c = cylinder(5, 40);
+    const result = b.subtract(c, 'hole').shell(2);
+    const edges = result.edges();
+    // (12 box + 2 cyl) * 2 (shell) = 28
+    expect(edges).toHaveLength(28);
+    // Should have outer and inner versions of hole edges
+    const outerHoleEdges = edges.filter(e => e.name.startsWith('outer_hole.'));
+    const innerHoleEdges = edges.filter(e => e.name.startsWith('inner_hole.'));
+    expect(outerHoleEdges).toHaveLength(2);
+    expect(innerHoleEdges).toHaveLength(2);
+  });
+
+  it('Subtract edge face refs are consistent with face names', () => {
+    const b = box(100, 60, 30);
+    const c = cylinder(5, 40);
+    const result = b.subtract(c, 'hole');
+    const fNames = new Set(result.faces().map(f => f.name));
+    for (const e of result.edges()) {
+      expect(fNames.has(e.faces[0])).toBe(true);
+      expect(fNames.has(e.faces[1])).toBe(true);
+    }
   });
 });

@@ -419,7 +419,7 @@ export function registerTools(server: McpServer): void {
     async ({ shape }) => {
       const entry = registry.get(shape);
       const readback = entry.shape.readback();
-      const result = { shape_id: entry.id, type: entry.type, readback, face_count: entry.shape.faces().length };
+      const result = { shape_id: entry.id, type: entry.type, readback, face_count: entry.shape.faces().length, edge_count: entry.shape.edges().length };
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );
@@ -651,7 +651,7 @@ export function registerTools(server: McpServer): void {
     }
   );
 
-  // ─── Topology Queries (3) ───────────────────────────────────
+  // ─── Topology Queries (4) ───────────────────────────────────
 
   server.tool(
     'query_faces',
@@ -707,6 +707,24 @@ export function registerTools(server: McpServer): void {
         content: [{
           type: 'text',
           text: JSON.stringify({ shape_id: shape, point: [x, y, pz], face: faceName, face_descriptor: faceDescriptor }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'query_edges',
+    'List all named edges of a shape. Each edge is the intersection of two named faces. Returns edge names, face pairs, geometry types, and midpoints.',
+    {
+      shape: z.string().describe('ID of shape to query'),
+    },
+    async ({ shape }) => {
+      const s = registry.get(shape).shape;
+      const edges = s.edges();
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ shape_id: shape, edge_count: edges.length, edges }),
         }],
       };
     }
