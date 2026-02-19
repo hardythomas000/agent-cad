@@ -28,6 +28,7 @@ const statusDims = document.getElementById('status-dims')!;
 const emptyState = document.getElementById('empty-state')!;
 const editorError = document.getElementById('editor-error')!;
 const gcodeContent = document.getElementById('gcode-content')!;
+const toolpathLegend = document.getElementById('toolpath-legend')!;
 
 // ─── Scene + controls ──────────────────────────────────────────
 
@@ -177,6 +178,9 @@ function runCode(code: string): void {
     if (tpVisual) {
       ctx.toolpathGroup.add(tpVisual);
       ctx.toolpathGroup.visible = showToolpathLines;
+      toolpathLegend.classList.toggle('visible', showToolpathLines);
+    } else {
+      toolpathLegend.classList.remove('visible');
     }
   }
   // G-code readout — auto-show/hide
@@ -344,6 +348,7 @@ document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
         showToolpathLines = !showToolpathLines;
         ctx.toolpathGroup.visible = showToolpathLines;
         btn.classList.toggle('active', showToolpathLines);
+        toolpathLegend.classList.toggle('visible', showToolpathLines && ctx.toolpathGroup.children.length > 0);
         break;
     }
   });

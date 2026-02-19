@@ -2,12 +2,23 @@
  * Toolpath Generation — 3-axis ball nose surface finishing.
  *
  * Generates parallel raster toolpaths directly from SDF geometry
- * via drop cutter. No mesh intermediary — the SDF IS the geometry.
+ * via surface finding. No mesh intermediary — the SDF IS the geometry.
+ *
+ * Coordinate convention:
+ *   SDF / Three.js: Y-up  (X right, Y up, Z toward camera)
+ *   CNC / G-code:   Z-up  (X right, Y depth, Z up / spindle)
+ *
+ * Points are stored in SDF convention (Y-up) so the viewer renders
+ * them directly. The G-code emitter swaps Y↔Z on output.
+ *
+ * Internally: raster grid in SDF XZ, drop along SDF -Y (downward).
+ * User-facing params (safe_z, z_top, z_bottom) are CNC Z-up convention
+ * and mapped to SDF Y internally.
  *
  * Ball nose contact math:
- *   offset_sdf = shape.round(R)      // expand surface outward by tool radius
- *   z_center = offset_sdf.dropCutter(x, y, zTop, zBottom)  // ball center Z
- *   z_tip = z_center - R             // tool tip Z (what G-code programs)
+ *   offset_sdf = shape.round(R)      // expand surface by tool radius
+ *   y_center = findSurface(...)       // ball center Y (scanning -Y)
+ *   y_tip = y_center - R             // tool tip (what G-code programs)
  */
 
 import { SDF, Round } from './sdf.js';
@@ -66,6 +77,30 @@ export interface ToolpathResult {
   stats: ToolpathStats;
 }
 
+// ─── Drop along Y ──────────────────────────────────────────────
+//
+// SDF.dropCutter() scans along -Z. We need to scan along -Y (down
+// in SDF Y-up convention). Use findSurface() directly with [0,-1,0].
+
+function dropAlongY(
+  shape: SDF,
+  x: number,
+  z: number,
+  yTop: number,
+  yBottom: number,
+  tolerance = 1e-7,
+): number | null {
+  const t = shape.findSurface(
+    [x, yTop, z],
+    [0, -1, 0],
+    0,
+    yTop - yBottom,
+    tolerance,
+  );
+  if (t === null) return null;
+  return yTop - t;
+}
+
 // ─── Core Algorithm ─────────────────────────────────────────────
 
 export function generateRasterSurfacing(
@@ -82,8 +117,6 @@ export function generateRasterSurfacing(
   const spacing = params.point_spacing ?? stepover;
   if (spacing <= 0) throw new Error('Point spacing must be positive');
 
-  const safeZ = params.safe_z;
-  const approachZ = params.approach_z ?? 5;
   const zigzag = params.zigzag ?? true;
 
   // Expand SDF surface outward by ball nose radius.
@@ -91,29 +124,35 @@ export function generateRasterSurfacing(
   // Drop cutter on this offset SDF finds the ball CENTER position.
   const offsetShape = new Round(shape, R);
 
-  // Get shape bounds for grid extents
-  const shapeBounds = shape.bounds();
+  // SDF bounds (Y-up)
+  const sdfBounds = shape.bounds();
   const overcut = params.boundary_overcut ?? R;
 
+  // Raster grid is in SDF XZ plane (= CNC XY plane)
+  // CNC 'x' direction = SDF X, CNC 'y' direction = SDF Z
   let primaryMin: number, primaryMax: number;
   let secondaryMin: number, secondaryMax: number;
 
   if (params.direction === 'x') {
-    // Cut along X, step in Y
-    primaryMin = shapeBounds.min[0] - overcut;
-    primaryMax = shapeBounds.max[0] + overcut;
-    secondaryMin = shapeBounds.min[1] - overcut;
-    secondaryMax = shapeBounds.max[1] + overcut;
+    // Cut along SDF X (CNC X), step in SDF Z (CNC Y)
+    primaryMin = sdfBounds.min[0] - overcut;
+    primaryMax = sdfBounds.max[0] + overcut;
+    secondaryMin = sdfBounds.min[2] - overcut;
+    secondaryMax = sdfBounds.max[2] + overcut;
   } else {
-    // Cut along Y, step in X
-    primaryMin = shapeBounds.min[1] - overcut;
-    primaryMax = shapeBounds.max[1] + overcut;
-    secondaryMin = shapeBounds.min[0] - overcut;
-    secondaryMax = shapeBounds.max[0] + overcut;
+    // Cut along SDF Z (CNC Y), step in SDF X (CNC X)
+    primaryMin = sdfBounds.min[2] - overcut;
+    primaryMax = sdfBounds.max[2] + overcut;
+    secondaryMin = sdfBounds.min[0] - overcut;
+    secondaryMax = sdfBounds.max[0] + overcut;
   }
 
-  const zTop = params.z_top ?? shapeBounds.max[2] + 10;
-  const zBottom = params.z_bottom ?? shapeBounds.min[2] - 5;
+  // CNC safe_z / z_top / z_bottom → SDF Y values
+  // These are specified in CNC Z-up convention, which maps to SDF Y
+  const safeY = params.safe_z;
+  const approachY = params.approach_z ?? (sdfBounds.max[1] + 5);
+  const yTop = params.z_top ?? sdfBounds.max[1] + 10;
+  const yBottom = params.z_bottom ?? sdfBounds.min[1] - 5;
 
   const points: ToolpathPoint[] = [];
   let passIndex = 0;
@@ -122,7 +161,6 @@ export function generateRasterSurfacing(
   for (let sec = secondaryMin; sec <= secondaryMax + 1e-9; sec += stepover) {
     const reverse = zigzag && (passIndex % 2 === 1);
     const pStart = reverse ? primaryMax : primaryMin;
-    const pEnd = reverse ? primaryMin : primaryMax;
     const pStep = reverse ? -spacing : spacing;
 
     let passHasPoints = false;
@@ -137,23 +175,26 @@ export function generateRasterSurfacing(
       if (!reverse && p > primaryMax) p = primaryMax;
       if (reverse && p < primaryMin) p = primaryMin;
 
-      const x = params.direction === 'x' ? p : sec;
-      const y = params.direction === 'x' ? sec : p;
+      // SDF coordinates: X and Z are the raster plane
+      const sdfX = params.direction === 'x' ? p : sec;
+      const sdfZ = params.direction === 'x' ? sec : p;
 
-      const zCenter = offsetShape.dropCutter(x, y, zTop, zBottom);
-      if (zCenter === null) continue; // No surface — air region
+      // Drop along -Y to find surface contact
+      const yCenter = dropAlongY(offsetShape, sdfX, sdfZ, yTop, yBottom);
+      if (yCenter === null) continue; // No surface — air region
 
-      const zTip = zCenter - R;
+      const yTip = yCenter - R;
       passHasPoints = true;
 
+      // Output in SDF convention: (sdfX, sdfY, sdfZ)
+      // point.y = SDF Y = CNC Z (height / spindle axis)
       if (firstCut) {
-        // Rapid to start of pass, approach, then plunge
-        passPoints.push({ x, y, z: safeZ, type: 'rapid' });
-        passPoints.push({ x, y, z: approachZ, type: 'rapid' });
-        passPoints.push({ x, y, z: zTip, type: 'plunge' });
+        passPoints.push({ x: sdfX, y: safeY, z: sdfZ, type: 'rapid' });
+        passPoints.push({ x: sdfX, y: approachY, z: sdfZ, type: 'rapid' });
+        passPoints.push({ x: sdfX, y: yTip, z: sdfZ, type: 'plunge' });
         firstCut = false;
       } else {
-        passPoints.push({ x, y, z: zTip, type: 'cut' });
+        passPoints.push({ x: sdfX, y: yTip, z: sdfZ, type: 'cut' });
       }
     }
 
@@ -161,7 +202,7 @@ export function generateRasterSurfacing(
       points.push(...passPoints);
       // Retract at end of pass
       const lastPt = passPoints[passPoints.length - 1];
-      points.push({ x: lastPt.x, y: lastPt.y, z: safeZ, type: 'rapid' });
+      points.push({ x: lastPt.x, y: safeY, z: lastPt.z, type: 'rapid' });
       passIndex++;
     }
   }
@@ -169,11 +210,11 @@ export function generateRasterSurfacing(
   // Compute statistics
   const stats = computeStats(points, params);
 
-  // Compute Z bounds from cut points
+  // Compute Y bounds from cut points (stored in point.y = SDF Y)
   const cutPoints = points.filter(p => p.type === 'cut' || p.type === 'plunge');
-  const zValues = cutPoints.map(p => p.z);
-  const zMin = zValues.length > 0 ? Math.min(...zValues) : 0;
-  const zMax = zValues.length > 0 ? Math.max(...zValues) : 0;
+  const yValues = cutPoints.map(p => p.y);
+  const yMin = yValues.length > 0 ? Math.min(...yValues) : 0;
+  const yMax = yValues.length > 0 ? Math.max(...yValues) : 0;
 
   return {
     tool,
@@ -181,11 +222,11 @@ export function generateRasterSurfacing(
     shape_name: shape.name,
     points,
     bounds: {
-      x: [shapeBounds.min[0] - overcut, shapeBounds.max[0] + overcut],
-      y: [shapeBounds.min[1] - overcut, shapeBounds.max[1] + overcut],
-      z: [zMin, zMax],
+      x: [sdfBounds.min[0] - overcut, sdfBounds.max[0] + overcut],
+      y: [yMin, yMax],
+      z: [sdfBounds.min[2] - overcut, sdfBounds.max[2] + overcut],
     },
-    stats: { ...stats, z_min: zMin, z_max: zMax },
+    stats: { ...stats, z_min: yMin, z_max: yMax },
   };
 }
 
@@ -217,9 +258,9 @@ function computeStats(
     }
   }
 
-  // Count passes (each safe_z rapid after cutting is end of a pass)
+  // Count passes (retract to safe height after cutting = end of pass)
   for (let i = 1; i < points.length; i++) {
-    if (points[i].type === 'rapid' && points[i].z === params.safe_z &&
+    if (points[i].type === 'rapid' && points[i].y === params.safe_z &&
         i > 0 && (points[i - 1].type === 'cut' || points[i - 1].type === 'plunge')) {
       passCount++;
     }

@@ -3,7 +3,7 @@ import { box, sphere } from '../src/api.js';
 import { generateRasterSurfacing } from '../src/toolpath.js';
 import type { ToolDefinition, ToolpathParams } from '../src/toolpath.js';
 
-const EPSILON = 0.1; // Toolpath Z accuracy depends on bounds estimation + drop cutter
+const EPSILON = 0.1; // Toolpath accuracy depends on bounds estimation + surface finding
 
 function near(actual: number, expected: number, tol = EPSILON) {
   expect(Math.abs(actual - expected)).toBeLessThan(tol);
@@ -24,16 +24,26 @@ function makeParams(overrides?: Partial<ToolpathParams>): ToolpathParams {
   };
 }
 
+// Coordinate convention:
+//   Points are in SDF/viewer convention (Y-up).
+//   pt.x = SDF X (CNC X)
+//   pt.y = SDF Y (CNC Z / spindle — height axis)
+//   pt.z = SDF Z (CNC Y — depth axis)
+//
+//   box(100, 60, 30):
+//     SDF X: -50..50, SDF Y: -30..30 (height), SDF Z: -15..15 (depth)
+//     Box "top" face is at pt.y = 30
+
 describe('generateRasterSurfacing', () => {
 
   describe('flat box — ball nose offset sanity', () => {
-    // Box centered at origin: 100x60x30. Top at Z=15.
-    // Ball nose R=5: offset SDF top at Z=20.
-    // Drop cutter on offset → z_center=20. z_tip = 20-5 = 15. Should match surface.
+    // Box centered at origin: 100×60×30. Top at Y=30 (SDF Y-up).
+    // Ball nose R=5: offset SDF top at Y=35.
+    // Drop along -Y on offset → y_center=35. y_tip = 35-5 = 30.
     const shape = box(100, 60, 30);
     const tool = makeTool(10); // R=5
 
-    it('generates points with Z near the flat surface', () => {
+    it('generates points with Y (height) near the flat surface', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         stepover_pct: 50, // 5mm stepover
         point_spacing: 10, // 10mm spacing along X for fast test
@@ -42,12 +52,12 @@ describe('generateRasterSurfacing', () => {
       expect(result.points.length).toBeGreaterThan(0);
       expect(result.stats.pass_count).toBeGreaterThan(0);
 
-      // All cut/plunge points should have Z near 15 (flat box top)
+      // All cut/plunge points should have Y near 30 (flat box top)
       const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
       expect(cutPoints.length).toBeGreaterThan(0);
 
       for (const pt of cutPoints) {
-        near(pt.z, 15, 1.0); // Within 1mm — box top is at Z=15
+        near(pt.y, 30, 1.0); // Within 1mm — box top is at Y=30
       }
     });
 
@@ -66,13 +76,13 @@ describe('generateRasterSurfacing', () => {
   });
 
   describe('sphere — curved surface', () => {
-    // Sphere R=20. At (0,0): surface at Z=20.
-    // Ball nose R=3. Offset: surface at Z=23.
-    // z_center = 23, z_tip = 23-3 = 20. Should match sphere top.
+    // Sphere R=20. At (0,0): surface at Y=20 (SDF Y-up).
+    // Ball nose R=3. Offset: surface at Y=23.
+    // y_center = 23, y_tip = 23-3 = 20. Should match sphere top.
     const shape = sphere(20);
     const tool = makeTool(6); // R=3
 
-    it('Z at center is near sphere top', () => {
+    it('Y at center is near sphere top', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         stepover_pct: 50, // 3mm stepover
         point_spacing: 5,
@@ -81,34 +91,34 @@ describe('generateRasterSurfacing', () => {
       const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
       expect(cutPoints.length).toBeGreaterThan(0);
 
-      // Find point closest to (0, 0)
+      // Find point closest to center in XZ plane (raster plane)
       let closest = cutPoints[0];
       let closestDist = Infinity;
       for (const pt of cutPoints) {
-        const d = Math.sqrt(pt.x * pt.x + pt.y * pt.y);
+        const d = Math.sqrt(pt.x * pt.x + pt.z * pt.z);
         if (d < closestDist) {
           closestDist = d;
           closest = pt;
         }
       }
 
-      // Z near center should be close to 20 (sphere top)
-      near(closest.z, 20, 1.5);
+      // Y near center should be close to 20 (sphere top)
+      near(closest.y, 20, 1.5);
     });
 
-    it('Z decreases toward edges', () => {
+    it('Y decreases toward edges', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         stepover_pct: 50,
         point_spacing: 5,
       }));
 
       const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
-      const zValues = cutPoints.map(p => p.z);
-      const zMax = Math.max(...zValues);
-      const zMin = Math.min(...zValues);
+      const yValues = cutPoints.map(p => p.y);
+      const yMax = Math.max(...yValues);
+      const yMin = Math.min(...yValues);
 
-      // Sphere curves down → Z range should be significant
-      expect(zMax - zMin).toBeGreaterThan(5);
+      // Sphere curves down → Y range should be significant
+      expect(yMax - yMin).toBeGreaterThan(5);
     });
   });
 
@@ -123,11 +133,12 @@ describe('generateRasterSurfacing', () => {
         zigzag: true,
       }));
 
-      // Find rapid points at safe_z (pass starts)
+      // Find rapid points at safe height (pass starts)
+      // safe_z is in pt.y (SDF Y = height axis)
       const passStarts = result.points.filter(
-        (p, i) => p.type === 'rapid' && p.z === 50 &&
+        (p, i) => p.type === 'rapid' && p.y === 50 &&
         i + 1 < result.points.length && result.points[i + 1].type === 'rapid' &&
-        result.points[i + 1].z !== 50
+        result.points[i + 1].y !== 50
       );
 
       if (passStarts.length >= 2) {
@@ -161,22 +172,22 @@ describe('generateRasterSurfacing', () => {
     const shape = box(100, 60, 30);
     const tool = makeTool(10);
 
-    it('direction=x: cuts along X, steps in Y', () => {
+    it('direction=x: cuts along X, steps in Z (CNC Y)', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         direction: 'x',
         stepover_pct: 50,
         point_spacing: 10,
       }));
 
-      // Within a pass (consecutive cut points), Y should be constant
+      // Within a pass (consecutive cut points), Z should be constant
+      // (Z = SDF Z = CNC Y = stepover axis)
       const cutPoints = result.points.filter(p => p.type === 'cut');
       if (cutPoints.length >= 2) {
-        // First two consecutive cuts should have same Y
-        expect(cutPoints[0].y).toBe(cutPoints[1].y);
+        expect(cutPoints[0].z).toBe(cutPoints[1].z);
       }
     });
 
-    it('direction=y: cuts along Y, steps in X', () => {
+    it('direction=y: cuts along Z (CNC Y), steps in X', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         direction: 'y',
         stepover_pct: 50,
@@ -195,16 +206,16 @@ describe('generateRasterSurfacing', () => {
     const shape = box(100, 60, 30);
     const tool = makeTool(10);
 
-    it('each pass ends with a retract to safe_z', () => {
+    it('each pass ends with a retract to safe height', () => {
       const result = generateRasterSurfacing(shape, tool, makeParams({
         stepover_pct: 50,
         point_spacing: 10,
       }));
 
-      // Count retracts: rapid moves to safe_z after cutting
+      // Count retracts: rapid moves to safe_z (in pt.y) after cutting
       let retractCount = 0;
       for (let i = 1; i < result.points.length; i++) {
-        if (result.points[i].type === 'rapid' && result.points[i].z === 50 &&
+        if (result.points[i].type === 'rapid' && result.points[i].y === 50 &&
             (result.points[i - 1].type === 'cut' || result.points[i - 1].type === 'plunge')) {
           retractCount++;
         }

@@ -370,6 +370,44 @@
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover { background: var(--teal); }
 
+    /* ─── Toolpath legend ───────────────────────── */
+
+    #toolpath-legend {
+      position: absolute;
+      bottom: 32px;
+      right: 10px;
+      display: none;
+      flex-direction: column;
+      gap: 4px;
+      background: rgba(24, 24, 28, 0.85);
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      padding: 6px 10px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-dim);
+      backdrop-filter: blur(8px);
+      z-index: 4;
+    }
+
+    #toolpath-legend.visible { display: flex; }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .legend-swatch {
+      width: 14px;
+      height: 3px;
+      border-radius: 1px;
+    }
+
+    .legend-swatch.rapid  { background: #c9a84c; }
+    .legend-swatch.cut    { background: #4a9e8e; }
+    .legend-swatch.plunge { background: #e06060; }
+
     /* ─── Light theme overrides ────────────────── */
 
     [data-theme="light"] {
@@ -447,6 +485,11 @@
         <div class="drop-icon">+</div>
         <div class="drop-text">Drop STL File</div>
         <div class="drop-hint">.stl binary or ASCII</div>
+      </div>
+      <div id="toolpath-legend">
+        <div class="legend-item"><span class="legend-swatch rapid"></span> Rapid</div>
+        <div class="legend-item"><span class="legend-swatch cut"></span> Cut</div>
+        <div class="legend-item"><span class="legend-swatch plunge"></span> Plunge</div>
       </div>
       <div id="status-bar">
         <span id="status-mode" class="status-live">Live</span>

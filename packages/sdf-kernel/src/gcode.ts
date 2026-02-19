@@ -7,6 +7,13 @@
  *
  * Modal optimization omits unchanged coordinates and codes,
  * reducing file size by ~40% on typical surfacing programs.
+ *
+ * Coordinate convention:
+ *   Toolpath points are in SDF/viewer convention (Y-up).
+ *   G-code needs CNC convention (Z-up). We swap Y↔Z:
+ *     G-code X = point.x   (SDF X = CNC X)
+ *     G-code Y = point.z   (SDF Z = CNC Y)
+ *     G-code Z = point.y   (SDF Y = CNC Z / spindle axis)
  */
 
 import type { ToolpathResult, ToolpathPoint } from './toolpath.js';
@@ -99,6 +106,11 @@ export function emitFanucGCode(
   let lastF: number | null = null;
 
   for (const pt of toolpath.points) {
+    // Swap Y↔Z: SDF (x, y, z) → CNC (x=X, z=Y, y=Z)
+    const gcX = pt.x;
+    const gcY = pt.z;
+    const gcZ = pt.y;
+
     const parts: string[] = [];
 
     if (pt.type === 'rapid') {
@@ -120,17 +132,17 @@ export function emitFanucGCode(
     }
 
     // Only emit changed coordinates
-    if (pt.x !== lastX) {
-      parts.push(`X${fmt(pt.x)}`);
-      lastX = pt.x;
+    if (gcX !== lastX) {
+      parts.push(`X${fmt(gcX)}`);
+      lastX = gcX;
     }
-    if (pt.y !== lastY) {
-      parts.push(`Y${fmt(pt.y)}`);
-      lastY = pt.y;
+    if (gcY !== lastY) {
+      parts.push(`Y${fmt(gcY)}`);
+      lastY = gcY;
     }
-    if (pt.z !== lastZ) {
-      parts.push(`Z${fmt(pt.z)}`);
-      lastZ = pt.z;
+    if (gcZ !== lastZ) {
+      parts.push(`Z${fmt(gcZ)}`);
+      lastZ = gcZ;
     }
 
     // Feed rate (only for G01, only when changed)

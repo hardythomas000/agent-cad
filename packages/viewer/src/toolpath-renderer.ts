@@ -2,9 +2,9 @@
  * Toolpath Renderer — converts ToolpathResult to Three.js vertex-colored lines.
  *
  * Single LineSegments object with per-vertex colors:
- *   Rapids = red (0xe06060)
- *   Cuts   = teal (0x4a9e8e)
- *   Plunges = gold (0xc9a84c)
+ *   Rapids  = gold (0xc9a84c)
+ *   Cuts    = teal (0x4a9e8e)
+ *   Plunges = red  (0xe06060)
  *
  * Colors are hardcoded CAM conventions — they don't change with theme.
  */
@@ -12,9 +12,9 @@
 import * as THREE from 'three';
 import type { ToolpathResult } from '@agent-cad/sdf-kernel';
 
-const RAPID_COLOR  = new THREE.Color(0xe06060);
+const RAPID_COLOR  = new THREE.Color(0xc9a84c);
 const CUT_COLOR    = new THREE.Color(0x4a9e8e);
-const PLUNGE_COLOR = new THREE.Color(0xc9a84c);
+const PLUNGE_COLOR = new THREE.Color(0xe06060);
 
 function colorForType(type: 'rapid' | 'cut' | 'plunge'): THREE.Color {
   switch (type) {

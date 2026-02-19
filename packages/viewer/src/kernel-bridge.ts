@@ -13,6 +13,9 @@ import {
   generateRasterSurfacing,
   emitFanucGCode,
   hole,
+  findTool,
+  listTools,
+  listLibraries,
   type SDF2D,
   type TriangleMesh,
   type ToolDefinition,
@@ -164,6 +167,7 @@ export function executeCode(code: string): ExecuteResult {
       'computeMesh', 'exportSTL',
       'defineTool', 'showToolpath',
       'hole',
+      'findTool', 'listTools', 'listLibraries',
       code,
     );
 
@@ -174,6 +178,7 @@ export function executeCode(code: string): ExecuteResult {
       computeMesh, _exportSTL,
       _defineTool, _showToolpath,
       _hole,
+      findTool, listTools, listLibraries,
     );
 
     // If computeMesh was called explicitly, use that result

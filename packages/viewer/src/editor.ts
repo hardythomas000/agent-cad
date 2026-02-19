@@ -104,16 +104,21 @@ const lightHighlight = HighlightStyle.define([
 // ─── Default code ─────────────────────────────────────────
 
 const DEFAULT_CODE = `// Agent CAD — live editor
-// Edit code below, geometry updates in real-time.
+// Tool from Haas library: 8mm ballnose
 
-const plate = box(150, 20, 80)
-const drill = cylinder(5, 30).rotateX(90)
+const shape = hole(
+  hole(
+    box(80, 30, 60),
+    'top', { diameter: 10, depth: 'through', at: [25, 0, 15] }
+  ),
+  'top', { diameter: 10, depth: 'through', at: [-25, 0, -15] }
+)
 
-const shape = plate
-  .subtract(drill.translate(50, 0, 0))
-  .subtract(drill.translate(-50, 0, 0))
-
-computeMesh(shape, 1.0)
+// Pull 8mm ballnose from Haas tool crib
+const tool = findTool('haas', 'ballnose', 8)
+showToolpath(shape, tool, {
+  feed_rate: 4800, rpm: 12000, safe_z: 25, stepover_pct: 10
+})
 `;
 
 // ─── Init ─────────────────────────────────────────────────
