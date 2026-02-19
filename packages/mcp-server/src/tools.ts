@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 33 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 36 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -249,13 +249,14 @@ export function registerTools(server: McpServer): void {
       shape_b: z.string().describe('ID of shape to remove'),
       smooth_radius: z.number().min(0).default(0).describe('Blend radius (0 = sharp)'),
       name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional().describe('Optional semantic name for the cut feature (e.g. "hole_1", "pocket_1"). B\'s faces get prefixed with this name. Letters, digits, hyphens, underscores only.'),
     },
-    async ({ shape_a, shape_b, smooth_radius, name }) => {
+    async ({ shape_a, shape_b, smooth_radius, name, feature_name }) => {
       const a = registry.get(shape_a).shape;
       const b = registry.get(shape_b).shape;
       const shape: SDF = smooth_radius > 0
-        ? a.smoothSubtract(b, smooth_radius)
-        : a.subtract(b);
+        ? a.smoothSubtract(b, smooth_radius, feature_name)
+        : a.subtract(b, feature_name);
       const result = registry.create(shape, 'subtract', name);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
@@ -288,9 +289,9 @@ export function registerTools(server: McpServer): void {
     'Move a shape. Returns a new shape (original unchanged).',
     {
       shape: z.string().describe('ID of shape to move'),
-      x: z.number().describe('Translation in X (mm)'),
-      y: z.number().describe('Translation in Y (mm)'),
-      z: z.number().describe('Translation in Z (mm)'),
+      x: z.number().finite().describe('Translation in X (mm)'),
+      y: z.number().finite().describe('Translation in Y (mm)'),
+      z: z.number().finite().describe('Translation in Z (mm)'),
       name: z.string().optional().describe('Optional name for result (letters, digits, hyphens, underscores only)'),
     },
     async ({ shape, x, y, z: tz, name }) => {
@@ -418,7 +419,7 @@ export function registerTools(server: McpServer): void {
     async ({ shape }) => {
       const entry = registry.get(shape);
       const readback = entry.shape.readback();
-      const result = { shape_id: entry.id, type: entry.type, readback };
+      const result = { shape_id: entry.id, type: entry.type, readback, face_count: entry.shape.faces().length };
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );
@@ -428,9 +429,9 @@ export function registerTools(server: McpServer): void {
     'Evaluate the SDF at a point. Returns signed distance and inside/outside.',
     {
       shape: z.string().describe('ID of shape to evaluate'),
-      x: z.number().describe('X coordinate'),
-      y: z.number().describe('Y coordinate'),
-      z: z.number().describe('Z coordinate'),
+      x: z.number().finite().describe('X coordinate'),
+      y: z.number().finite().describe('Y coordinate'),
+      z: z.number().finite().describe('Z coordinate'),
     },
     async ({ shape, x, y, z: pz }) => {
       const entry = registry.get(shape);
@@ -450,10 +451,10 @@ export function registerTools(server: McpServer): void {
     'Find Z where a point tool contacts the surface, searching downward from z_top to z_bottom.',
     {
       shape: z.string().describe('ID of shape'),
-      x: z.number().describe('X position'),
-      y: z.number().describe('Y position'),
-      z_top: z.number().describe('Z start (top of search)'),
-      z_bottom: z.number().describe('Z end (bottom of search)'),
+      x: z.number().finite().describe('X position'),
+      y: z.number().finite().describe('Y position'),
+      z_top: z.number().finite().describe('Z start (top of search)'),
+      z_bottom: z.number().finite().describe('Z end (bottom of search)'),
     },
     async ({ shape, x, y, z_top, z_bottom }) => {
       const entry = registry.get(shape);
@@ -647,6 +648,67 @@ export function registerTools(server: McpServer): void {
         estimated_cycle_time_min: toolpath.stats.estimated_time_min,
       };
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── Topology Queries (3) ───────────────────────────────────
+
+  server.tool(
+    'query_faces',
+    'List all named faces of a shape. Returns face names, normals, geometry types, and origins. Use this to discover what faces exist before referencing them.',
+    {
+      shape: z.string().describe('ID of shape to query'),
+    },
+    async ({ shape }) => {
+      const s = registry.get(shape).shape;
+      const faces = s.faces();
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ shape_id: shape, face_count: faces.length, faces }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'query_face',
+    'Get details of a single named face. Returns normal, geometry type, origin, radius, and axis.',
+    {
+      shape: z.string().describe('ID of shape to query'),
+      face_name: z.string().describe('Name of the face (e.g. "top", "hole_1.barrel")'),
+    },
+    async ({ shape, face_name }) => {
+      const s = registry.get(shape).shape;
+      const face = s.face(face_name);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ shape_id: shape, face }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'classify_point',
+    'Determine which named face a surface point belongs to. Returns the face name and descriptor, or null if not on any known face.',
+    {
+      shape: z.string().describe('ID of shape to evaluate'),
+      x: z.number().finite().describe('X coordinate'),
+      y: z.number().finite().describe('Y coordinate'),
+      z: z.number().finite().describe('Z coordinate'),
+    },
+    async ({ shape, x, y, z: pz }) => {
+      const s = registry.get(shape).shape;
+      const faceName = s.classifyPoint([x, y, pz]);
+      const faceDescriptor = faceName ? s.faces().find(f => f.name === faceName) ?? null : null;
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ shape_id: shape, point: [x, y, pz], face: faceName, face_descriptor: faceDescriptor }),
+        }],
+      };
     }
   );
 

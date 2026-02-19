@@ -4,6 +4,9 @@ export type { SDFReadback } from './sdf.js';
 export type { Vec2, Vec3, BoundingBox } from './vec3.js';
 export { vec3 } from './vec3.js';
 
+// Named Topology
+export type { FaceDescriptor, EdgeDescriptor, FaceKind, EdgeKind } from './topology.js';
+
 // 2D Profile API
 export { SDF2D } from './sdf2d.js';
 export type { BoundingBox2D } from './sdf2d.js';

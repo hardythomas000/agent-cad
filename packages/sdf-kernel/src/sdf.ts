@@ -10,7 +10,8 @@
  */
 
 import { Vec3, BoundingBox, vec3, add, sub, scale, dot, length, normalize, abs3, max3, len2d } from './vec3.js';
-import type { SDF2D } from './sdf2d.js';
+import { type SDF2D, Circle2D, Rect2D } from './sdf2d.js';
+import type { FaceDescriptor, EdgeDescriptor } from './topology.js';
 
 // ─── Base class ────────────────────────────────────────────────
 
@@ -176,11 +177,11 @@ export abstract class SDF {
   // ─── Boolean operations (fluent) ───────────────────────────
 
   union(other: SDF): SDF { return new Union(this, other); }
-  subtract(other: SDF): SDF { return new Subtract(this, other); }
+  subtract(other: SDF, featureName?: string): SDF { return new Subtract(this, other, featureName); }
   intersect(other: SDF): SDF { return new Intersect(this, other); }
 
   smoothUnion(other: SDF, k: number): SDF { return new SmoothUnion(this, other, k); }
-  smoothSubtract(other: SDF, k: number): SDF { return new SmoothSubtract(this, other, k); }
+  smoothSubtract(other: SDF, k: number, featureName?: string): SDF { return new SmoothSubtract(this, other, k, featureName); }
   smoothIntersect(other: SDF, k: number): SDF { return new SmoothIntersect(this, other, k); }
 
   // ─── Transform operations (fluent) ─────────────────────────
@@ -202,6 +203,46 @@ export abstract class SDF {
 
   /** Translate — alias for .translate() */
   at(x: number, y: number, z: number): SDF { return this.translate(x, y, z); }
+
+  // ─── Topology (named faces/edges) ──────────────────────────
+
+  /** Return all named faces of this shape. Override in subclasses. */
+  faces(): FaceDescriptor[] { return []; }
+
+  /** Get a specific face by name. Throws if not found. */
+  face(name: string): FaceDescriptor {
+    const all = this.faces();
+    const f = all.find(fd => fd.name === name);
+    if (!f) {
+      throw new Error(
+        `Face "${name}" not found. Available faces: [${all.map(fd => fd.name).join(', ')}]`
+      );
+    }
+    return f;
+  }
+
+  /** Return all edges (pairs of adjacent faces). Override in subclasses. */
+  edges(): EdgeDescriptor[] { return []; }
+
+  /** Get edge at intersection of two named faces. */
+  edge(face1: string, face2: string): EdgeDescriptor {
+    const e = this.edges().find(ed =>
+      (ed.faces[0] === face1 && ed.faces[1] === face2) ||
+      (ed.faces[0] === face2 && ed.faces[1] === face1)
+    );
+    if (!e) {
+      throw new Error(
+        `Edge between "${face1}" and "${face2}" not found.`
+      );
+    }
+    return e;
+  }
+
+  /** Classify which face a surface point belongs to. Returns null if unknown. */
+  classifyPoint(_p: Vec3): string | null { return null; }
+
+  /** Get direct SDF children (for tree traversal). */
+  children(): SDF[] { return []; }
 }
 
 // ─── Readback type ─────────────────────────────────────────────
@@ -227,6 +268,10 @@ export class Sphere extends SDF {
     const r = this.radius;
     return { min: vec3(-r, -r, -r), max: vec3(r, r, r) };
   }
+  faces(): FaceDescriptor[] {
+    return [{ name: 'surface', normal: [1, 0, 0], kind: 'spherical', radius: this.radius }];
+  }
+  classifyPoint(_p: Vec3): string | null { return 'surface'; }
 }
 
 export class Box extends SDF {
@@ -251,6 +296,42 @@ export class Box extends SDF {
   bounds(): BoundingBox {
     return { min: vec3(-this.half[0], -this.half[1], -this.half[2]), max: vec3(this.half[0], this.half[1], this.half[2]) };
   }
+  faces(): FaceDescriptor[] {
+    const [hx, hy, hz] = this.half;
+    return [
+      { name: 'right',  normal: [1, 0, 0],  kind: 'planar', origin: [hx, 0, 0] },
+      { name: 'left',   normal: [-1, 0, 0], kind: 'planar', origin: [-hx, 0, 0] },
+      { name: 'top',    normal: [0, 1, 0],  kind: 'planar', origin: [0, hy, 0] },
+      { name: 'bottom', normal: [0, -1, 0], kind: 'planar', origin: [0, -hy, 0] },
+      { name: 'front',  normal: [0, 0, 1],  kind: 'planar', origin: [0, 0, hz] },
+      { name: 'back',   normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -hz] },
+    ];
+  }
+  edges(): EdgeDescriptor[] {
+    const [hx, hy, hz] = this.half;
+    return [
+      { name: 'top.front',    faces: ['top', 'front'],    kind: 'line', midpoint: [0, hy, hz] },
+      { name: 'top.back',     faces: ['top', 'back'],     kind: 'line', midpoint: [0, hy, -hz] },
+      { name: 'top.right',    faces: ['top', 'right'],    kind: 'line', midpoint: [hx, hy, 0] },
+      { name: 'top.left',     faces: ['top', 'left'],     kind: 'line', midpoint: [-hx, hy, 0] },
+      { name: 'bottom.front', faces: ['bottom', 'front'], kind: 'line', midpoint: [0, -hy, hz] },
+      { name: 'bottom.back',  faces: ['bottom', 'back'],  kind: 'line', midpoint: [0, -hy, -hz] },
+      { name: 'bottom.right', faces: ['bottom', 'right'], kind: 'line', midpoint: [hx, -hy, 0] },
+      { name: 'bottom.left',  faces: ['bottom', 'left'],  kind: 'line', midpoint: [-hx, -hy, 0] },
+      { name: 'front.right',  faces: ['front', 'right'],  kind: 'line', midpoint: [hx, 0, hz] },
+      { name: 'front.left',   faces: ['front', 'left'],   kind: 'line', midpoint: [-hx, 0, hz] },
+      { name: 'back.right',   faces: ['back', 'right'],   kind: 'line', midpoint: [hx, 0, -hz] },
+      { name: 'back.left',    faces: ['back', 'left'],    kind: 'line', midpoint: [-hx, 0, -hz] },
+    ];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dx = Math.abs(Math.abs(p[0]) - this.half[0]);
+    const dy = Math.abs(Math.abs(p[1]) - this.half[1]);
+    const dz = Math.abs(Math.abs(p[2]) - this.half[2]);
+    if (dx <= dy && dx <= dz) return p[0] >= 0 ? 'right' : 'left';
+    if (dy <= dx && dy <= dz) return p[1] >= 0 ? 'top' : 'bottom';
+    return p[2] >= 0 ? 'front' : 'back';
+  }
 }
 
 export class Cylinder extends SDF {
@@ -268,6 +349,28 @@ export class Cylinder extends SDF {
   bounds(): BoundingBox {
     const r = this.radius, hh = this.height / 2;
     return { min: vec3(-r, -r, -hh), max: vec3(r, r, hh) };
+  }
+  faces(): FaceDescriptor[] {
+    const hh = this.height / 2;
+    return [
+      { name: 'top_cap',    normal: [0, 0, 1],  kind: 'planar', origin: [0, 0, hh] },
+      { name: 'bottom_cap', normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -hh] },
+      { name: 'barrel',     normal: [1, 0, 0],  kind: 'cylindrical', radius: this.radius, axis: [0, 0, 1] },
+    ];
+  }
+  edges(): EdgeDescriptor[] {
+    const hh = this.height / 2;
+    return [
+      { name: 'top_cap.barrel',    faces: ['top_cap', 'barrel'],    kind: 'arc', midpoint: [this.radius, 0, hh] },
+      { name: 'bottom_cap.barrel', faces: ['bottom_cap', 'barrel'], kind: 'arc', midpoint: [this.radius, 0, -hh] },
+    ];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const hh = this.height / 2;
+    const dCap = Math.abs(Math.abs(p[2]) - hh);
+    const dBarrel = Math.abs(len2d(p[0], p[1]) - this.radius);
+    if (dCap < dBarrel) return p[2] >= 0 ? 'top_cap' : 'bottom_cap';
+    return 'barrel';
   }
 }
 
@@ -310,6 +413,24 @@ export class Cone extends SDF {
     const r = this.radius;
     return { min: vec3(-r, -r, -this.height), max: vec3(r, r, 0) };
   }
+  faces(): FaceDescriptor[] {
+    return [
+      { name: 'base_cap', normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -this.height] },
+      { name: 'surface',  normal: [1, 0, 0],  kind: 'conical', radius: this.radius, axis: [0, 0, 1] },
+    ];
+  }
+  edges(): EdgeDescriptor[] {
+    return [
+      { name: 'base_cap.surface', faces: ['base_cap', 'surface'], kind: 'arc', midpoint: [this.radius, 0, -this.height] },
+    ];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dBase = Math.abs(p[2] + this.height);
+    const r = len2d(p[0], p[1]);
+    const expectedR = this.radius * Math.max(0, -p[2] / this.height);
+    const dSlant = Math.abs(r - expectedR);
+    return dBase < dSlant ? 'base_cap' : 'surface';
+  }
 }
 
 export class Torus extends SDF {
@@ -324,6 +445,10 @@ export class Torus extends SDF {
     const R = this.majorRadius, r = this.minorRadius;
     return { min: vec3(-R - r, -R - r, -r), max: vec3(R + r, R + r, r) };
   }
+  faces(): FaceDescriptor[] {
+    return [{ name: 'surface', normal: [1, 0, 0], kind: 'toroidal', radius: this.minorRadius }];
+  }
+  classifyPoint(_p: Vec3): string | null { return 'surface'; }
 }
 
 export class Plane extends SDF {
@@ -339,9 +464,28 @@ export class Plane extends SDF {
     return dot(p, this.n) - this.offset;
   }
   gradient(_p: Vec3): Vec3 { return this.n; }
+  faces(): FaceDescriptor[] {
+    return [{ name: 'surface', normal: this.n, kind: 'planar' }];
+  }
+  classifyPoint(_p: Vec3): string | null { return 'surface'; }
 }
 
 // ─── Boolean operations ────────────────────────────────────────
+
+/** Merge faces from two children, prefixing with a./b. on name collision. */
+function mergeFaces(a: SDF, b: SDF): FaceDescriptor[] {
+  const aFaces = a.faces();
+  const bFaces = b.faces();
+  const aNames = new Set(aFaces.map(f => f.name));
+  const hasCollision = bFaces.some(f => aNames.has(f.name));
+  if (hasCollision) {
+    return [
+      ...aFaces.map(f => ({ ...f, name: `a.${f.name}` })),
+      ...bFaces.map(f => ({ ...f, name: `b.${f.name}` })),
+    ];
+  }
+  return [...aFaces, ...bFaces];
+}
 
 export class Union extends SDF {
   readonly kind = 'union' as const;
@@ -357,11 +501,29 @@ export class Union extends SDF {
       max: [Math.max(ba.max[0], bb.max[0]), Math.max(ba.max[1], bb.max[1]), Math.max(ba.max[2], bb.max[2])] as Vec3,
     };
   }
+  faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  edges(): EdgeDescriptor[] {
+    return [...this.a.edges(), ...this.b.edges()];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dA) < Math.abs(dB)) return this.a.classifyPoint(p);
+    return this.b.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 export class Subtract extends SDF {
   readonly kind = 'subtract' as const;
-  constructor(readonly a: SDF, readonly b: SDF) { super(); }
+  readonly resolvedFeatureName: string;
+  private static nextId = 1;
+  /** Reset auto-increment counter (for testing). */
+  static resetIdCounter(): void { Subtract.nextId = 1; }
+  constructor(readonly a: SDF, readonly b: SDF, readonly featureName?: string) {
+    super();
+    this.resolvedFeatureName = featureName ?? `subtract_${Subtract.nextId++}`;
+  }
   get name() { return `subtract(${this.a.name}, ${this.b.name})`; }
   evaluate(p: Vec3): number {
     return Math.max(this.a.evaluate(p), -this.b.evaluate(p));
@@ -369,6 +531,37 @@ export class Subtract extends SDF {
   bounds(): BoundingBox {
     return this.a.bounds(); // Conservative: result fits within A
   }
+  faces(): FaceDescriptor[] {
+    const aFaces = this.a.faces();
+    const bFaces = this.b.faces().map(f => ({
+      ...f,
+      name: `${this.resolvedFeatureName}.${f.name}`,
+      normal: [-f.normal[0], -f.normal[1], -f.normal[2]] as Vec3,
+    }));
+    return [...aFaces, ...bFaces];
+  }
+  edges(): EdgeDescriptor[] {
+    const aEdges = this.a.edges();
+    const bEdges = this.b.edges().map(e => ({
+      ...e,
+      name: `${this.resolvedFeatureName}.${e.name}`,
+      faces: [
+        `${this.resolvedFeatureName}.${e.faces[0]}`,
+        `${this.resolvedFeatureName}.${e.faces[1]}`,
+      ] as [string, string],
+    }));
+    return [...aEdges, ...bEdges];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dB) < Math.abs(dA)) {
+      const bFace = this.b.classifyPoint(p);
+      return bFace ? `${this.resolvedFeatureName}.${bFace}` : null;
+    }
+    return this.a.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 export class Intersect extends SDF {
@@ -385,6 +578,17 @@ export class Intersect extends SDF {
       max: [Math.min(ba.max[0], bb.max[0]), Math.min(ba.max[1], bb.max[1]), Math.min(ba.max[2], bb.max[2])] as Vec3,
     };
   }
+  faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  edges(): EdgeDescriptor[] {
+    return [...this.a.edges(), ...this.b.edges()];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dA) > Math.abs(dB)) return this.b.classifyPoint(p);
+    return this.a.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 // Smooth booleans (polynomial smooth min/max)
@@ -413,11 +617,26 @@ export class SmoothUnion extends SDF {
       max: [Math.max(ba.max[0], bb.max[0]) + pad, Math.max(ba.max[1], bb.max[1]) + pad, Math.max(ba.max[2], bb.max[2]) + pad] as Vec3,
     };
   }
+  faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dA) < Math.abs(dB)) return this.a.classifyPoint(p);
+    return this.b.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 export class SmoothSubtract extends SDF {
   readonly kind = 'smoothSubtract' as const;
-  constructor(readonly a: SDF, readonly b: SDF, readonly k: number) { super(); }
+  readonly resolvedFeatureName: string;
+  private static nextId = 1;
+  /** Reset auto-increment counter (for testing). */
+  static resetIdCounter(): void { SmoothSubtract.nextId = 1; }
+  constructor(readonly a: SDF, readonly b: SDF, readonly k: number, readonly featureName?: string) {
+    super();
+    this.resolvedFeatureName = featureName ?? `smooth_subtract_${SmoothSubtract.nextId++}`;
+  }
   get name() { return `smoothSubtract(${this.a.name}, ${this.b.name}, k=${this.k})`; }
   evaluate(p: Vec3): number {
     return smax(this.a.evaluate(p), -this.b.evaluate(p), this.k);
@@ -425,6 +644,25 @@ export class SmoothSubtract extends SDF {
   bounds(): BoundingBox {
     return this.a.bounds();
   }
+  faces(): FaceDescriptor[] {
+    const aFaces = this.a.faces();
+    const bFaces = this.b.faces().map(f => ({
+      ...f,
+      name: `${this.resolvedFeatureName}.${f.name}`,
+      normal: [-f.normal[0], -f.normal[1], -f.normal[2]] as Vec3,
+    }));
+    return [...aFaces, ...bFaces];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dB) < Math.abs(dA)) {
+      const bFace = this.b.classifyPoint(p);
+      return bFace ? `${this.resolvedFeatureName}.${bFace}` : null;
+    }
+    return this.a.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 export class SmoothIntersect extends SDF {
@@ -441,6 +679,14 @@ export class SmoothIntersect extends SDF {
       max: [Math.min(ba.max[0], bb.max[0]), Math.min(ba.max[1], bb.max[1]), Math.min(ba.max[2], bb.max[2])] as Vec3,
     };
   }
+  faces(): FaceDescriptor[] { return mergeFaces(this.a, this.b); }
+  classifyPoint(p: Vec3): string | null {
+    const dA = this.a.evaluate(p);
+    const dB = this.b.evaluate(p);
+    if (Math.abs(dA) > Math.abs(dB)) return this.b.classifyPoint(p);
+    return this.a.classifyPoint(p);
+  }
+  children(): SDF[] { return [this.a, this.b]; }
 }
 
 // ─── Transforms ────────────────────────────────────────────────
@@ -459,6 +705,22 @@ export class Translate extends SDF {
       max: add(cb.max, this.offset),
     };
   }
+  faces(): FaceDescriptor[] {
+    return this.child.faces().map(f => ({
+      ...f,
+      origin: f.origin ? add(f.origin, this.offset) : undefined,
+    }));
+  }
+  edges(): EdgeDescriptor[] {
+    return this.child.edges().map(e => ({
+      ...e,
+      midpoint: e.midpoint ? add(e.midpoint, this.offset) : undefined,
+    }));
+  }
+  classifyPoint(p: Vec3): string | null {
+    return this.child.classifyPoint(sub(p, this.offset));
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 export class RotateAxis extends SDF {
@@ -472,8 +734,8 @@ export class RotateAxis extends SDF {
     this.s = Math.sin(-rad);
   }
   get name() { return `${this.child.name}.rotate${this.axis.toUpperCase()}(${this.deg})`; }
-  /** Rotate point by the forward rotation (inverse of the evaluate transform). */
-  private rotateForward(p: Vec3): Vec3 {
+  /** Rotate point by the forward rotation (child-space → parent-space). */
+  protected rotateForward(p: Vec3): Vec3 {
     const c = this.c, s = -this.s;
     switch (this.axis) {
       case 'x': return [p[0], c * p[1] - s * p[2], s * p[1] + c * p[2]];
@@ -509,6 +771,33 @@ export class RotateAxis extends SDF {
     }
     return { min, max };
   }
+  /** Rotate the inverse direction (parent-space → child-space). */
+  private rotateInverse(p: Vec3): Vec3 {
+    const { c, s } = this;
+    switch (this.axis) {
+      case 'x': return [p[0], c * p[1] - s * p[2], s * p[1] + c * p[2]];
+      case 'y': return [c * p[0] + s * p[2], p[1], -s * p[0] + c * p[2]];
+      case 'z': return [c * p[0] - s * p[1], s * p[0] + c * p[1], p[2]];
+    }
+  }
+  faces(): FaceDescriptor[] {
+    return this.child.faces().map(f => ({
+      ...f,
+      normal: this.rotateForward(f.normal),
+      origin: f.origin ? this.rotateForward(f.origin) : undefined,
+      axis: f.axis ? this.rotateForward(f.axis) : undefined,
+    }));
+  }
+  edges(): EdgeDescriptor[] {
+    return this.child.edges().map(e => ({
+      ...e,
+      midpoint: e.midpoint ? this.rotateForward(e.midpoint) : undefined,
+    }));
+  }
+  classifyPoint(p: Vec3): string | null {
+    return this.child.classifyPoint(this.rotateInverse(p));
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 export class Scale extends SDF {
@@ -529,6 +818,23 @@ export class Scale extends SDF {
       max: scale(cb.max, this.factor),
     };
   }
+  faces(): FaceDescriptor[] {
+    return this.child.faces().map(f => ({
+      ...f,
+      origin: f.origin ? scale(f.origin, this.factor) : undefined,
+      radius: f.radius !== undefined ? f.radius * this.factor : undefined,
+    }));
+  }
+  edges(): EdgeDescriptor[] {
+    return this.child.edges().map(e => ({
+      ...e,
+      midpoint: e.midpoint ? scale(e.midpoint, this.factor) : undefined,
+    }));
+  }
+  classifyPoint(p: Vec3): string | null {
+    return this.child.classifyPoint(scale(p, 1 / this.factor));
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 export class Mirror extends SDF {
@@ -553,6 +859,15 @@ export class Mirror extends SDF {
     max[i] = extent;
     return { min, max };
   }
+  faces(): FaceDescriptor[] { return this.child.faces(); }
+  edges(): EdgeDescriptor[] { return this.child.edges(); }
+  classifyPoint(p: Vec3): string | null {
+    const i = this.axis === 'x' ? 0 : this.axis === 'y' ? 1 : 2;
+    const mp: Vec3 = [...p];
+    mp[i] = Math.abs(mp[i]);
+    return this.child.classifyPoint(mp);
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 // ─── Modifiers ─────────────────────────────────────────────────
@@ -564,6 +879,24 @@ export class Shell extends SDF {
   evaluate(p: Vec3): number {
     return Math.abs(this.child.evaluate(p)) - this.thickness / 2;
   }
+  faces(): FaceDescriptor[] {
+    const childFaces = this.child.faces();
+    return [
+      ...childFaces.map(f => ({ ...f, name: `outer_${f.name}` })),
+      ...childFaces.map(f => ({
+        ...f,
+        name: `inner_${f.name}`,
+        normal: [-f.normal[0], -f.normal[1], -f.normal[2]] as Vec3,
+      })),
+    ];
+  }
+  classifyPoint(p: Vec3): string | null {
+    const d = this.child.evaluate(p);
+    const face = this.child.classifyPoint(p);
+    if (!face) return null;
+    return d >= 0 ? `outer_${face}` : `inner_${face}`;
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 export class Round extends SDF {
@@ -573,6 +906,10 @@ export class Round extends SDF {
   evaluate(p: Vec3): number {
     return this.child.evaluate(p) - this.radius;
   }
+  faces(): FaceDescriptor[] { return this.child.faces(); }
+  edges(): EdgeDescriptor[] { return this.child.edges(); }
+  classifyPoint(p: Vec3): string | null { return this.child.classifyPoint(p); }
+  children(): SDF[] { return [this.child]; }
 }
 
 export class Elongate extends SDF {
@@ -591,6 +928,17 @@ export class Elongate extends SDF {
     ];
     return this.child.evaluate(q);
   }
+  faces(): FaceDescriptor[] { return this.child.faces(); }
+  edges(): EdgeDescriptor[] { return this.child.edges(); }
+  classifyPoint(p: Vec3): string | null {
+    const q: Vec3 = [
+      p[0] - Math.max(-this.half[0], Math.min(p[0], this.half[0])),
+      p[1] - Math.max(-this.half[1], Math.min(p[1], this.half[1])),
+      p[2] - Math.max(-this.half[2], Math.min(p[2], this.half[2])),
+    ];
+    return this.child.classifyPoint(q);
+  }
+  children(): SDF[] { return [this.child]; }
 }
 
 // ─── 2D → 3D Bridge ────────────────────────────────────────────
@@ -631,6 +979,46 @@ export class Extrude extends SDF {
       max: vec3(b2.max[0], b2.max[1], this.halfH),
     };
   }
+
+  faces(): FaceDescriptor[] {
+    const result: FaceDescriptor[] = [
+      { name: 'top', normal: [0, 0, 1], kind: 'planar', origin: [0, 0, this.halfH] },
+      { name: 'bottom', normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -this.halfH] },
+    ];
+    if (this.profile instanceof Circle2D) {
+      result.push({
+        name: 'wall', normal: [1, 0, 0], kind: 'cylindrical',
+        radius: this.profile.radius, axis: [0, 0, 1],
+      });
+    } else if (this.profile instanceof Rect2D) {
+      result.push(
+        { name: 'wall_right', normal: [1, 0, 0], kind: 'planar', origin: [this.profile.halfW, 0, 0] },
+        { name: 'wall_left', normal: [-1, 0, 0], kind: 'planar', origin: [-this.profile.halfW, 0, 0] },
+        { name: 'wall_front', normal: [0, 1, 0], kind: 'planar', origin: [0, this.profile.halfH, 0] },
+        { name: 'wall_back', normal: [0, -1, 0], kind: 'planar', origin: [0, -this.profile.halfH, 0] },
+      );
+    } else {
+      result.push({ name: 'wall', normal: [1, 0, 0], kind: 'freeform' });
+    }
+    return result;
+  }
+
+  classifyPoint(p: Vec3): string | null {
+    const d2d = this.profile.evaluate(p[0], p[1]);
+    const dCap = Math.abs(p[2]) - this.halfH;
+    if (Math.abs(dCap) < Math.abs(d2d)) {
+      return p[2] >= 0 ? 'top' : 'bottom';
+    }
+    if (this.profile instanceof Rect2D) {
+      const dx = Math.abs(Math.abs(p[0]) - this.profile.halfW);
+      const dy = Math.abs(Math.abs(p[1]) - this.profile.halfH);
+      if (dx < dy) {
+        return p[0] >= 0 ? 'wall_right' : 'wall_left';
+      }
+      return p[1] >= 0 ? 'wall_front' : 'wall_back';
+    }
+    return 'wall';
+  }
 }
 
 /**
@@ -666,5 +1054,43 @@ export class Revolve extends SDF {
       min: vec3(-maxR, -maxR, b2.min[1]),
       max: vec3(maxR, maxR, b2.max[1]),
     };
+  }
+
+  faces(): FaceDescriptor[] {
+    if (this.profile instanceof Rect2D) {
+      const outerR = this.offset + this.profile.halfW;
+      const innerR = this.offset - this.profile.halfW;
+      const result: FaceDescriptor[] = [
+        { name: 'top', normal: [0, 0, 1], kind: 'planar', origin: [0, 0, this.profile.halfH] },
+        { name: 'bottom', normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -this.profile.halfH] },
+        { name: 'outer_wall', normal: [1, 0, 0], kind: 'cylindrical', radius: outerR, axis: [0, 0, 1] },
+      ];
+      if (innerR > 0) {
+        result.push({
+          name: 'inner_wall', normal: [-1, 0, 0], kind: 'cylindrical',
+          radius: innerR, axis: [0, 0, 1],
+        });
+      }
+      return result;
+    }
+    if (this.profile instanceof Circle2D) {
+      return [{ name: 'surface', normal: [1, 0, 0], kind: 'toroidal', radius: this.profile.radius }];
+    }
+    return [{ name: 'surface', normal: [1, 0, 0], kind: 'freeform' }];
+  }
+
+  classifyPoint(p: Vec3): string | null {
+    const r = len2d(p[0], p[1]);
+    if (this.profile instanceof Rect2D) {
+      const localR = r - this.offset;
+      const dRadial = Math.abs(localR) - this.profile.halfW;
+      const dAxial = Math.abs(p[2]) - this.profile.halfH;
+      if (Math.abs(dAxial) < Math.abs(dRadial)) {
+        return p[2] >= 0 ? 'top' : 'bottom';
+      }
+      const innerR = this.offset - this.profile.halfW;
+      return localR >= 0 ? 'outer_wall' : (innerR > 0 ? 'inner_wall' : 'outer_wall');
+    }
+    return 'surface';
   }
 }
