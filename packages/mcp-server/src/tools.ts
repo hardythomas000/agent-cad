@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 36 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 40 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -12,8 +12,10 @@ import {
   polygon, circle2d, rect2d, extrude, revolve,
   marchingCubes, exportSTL,
   generateRasterSurfacing, emitFanucGCode,
+  hole, pocket, boltCircle,
   type SDF, type TriangleMesh,
   type ToolDefinition,
+  type Vec3,
 } from '@agent-cad/sdf-kernel';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -727,6 +729,99 @@ export function registerTools(server: McpServer): void {
           text: JSON.stringify({ shape_id: shape, edge_count: edges.length, edges }),
         }],
       };
+    }
+  );
+
+  // ─── Semantic Features (3) ──────────────────────────────────
+
+  server.tool(
+    'create_hole',
+    'Create a hole on a named planar face. Resolves face topology to auto-orient and position the hole. Use query_faces first to discover available face names.',
+    {
+      shape: z.string().describe('ID of shape to cut the hole in'),
+      face_name: z.string().describe('Name of the planar face (e.g. "top", "front", "right")'),
+      diameter: z.number().positive().describe('Hole diameter in mm'),
+      depth: z.union([z.number().positive(), z.literal('through')])
+        .describe('Hole depth in mm, or "through" for full penetration'),
+      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+        .describe('3D offset from face center [x,y,z]. Normal component is dropped (projected onto face plane).'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
+        .describe('Feature name for topology (default: auto "hole_N")'),
+      name: z.string().optional().describe('Optional name for result shape'),
+    },
+    async ({ shape, face_name, diameter, depth, at, feature_name, name }) => {
+      const s = registry.get(shape).shape;
+      const result_shape = hole(s, face_name, {
+        diameter,
+        depth,
+        at: at as Vec3 | undefined,
+        featureName: feature_name,
+      });
+      const result = registry.create(result_shape, 'hole', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'create_pocket',
+    'Cut a rectangular pocket on a named planar face. Resolves face topology to auto-orient and position the pocket. Use query_faces first to discover available face names.',
+    {
+      shape: z.string().describe('ID of shape to cut the pocket in'),
+      face_name: z.string().describe('Name of the planar face (e.g. "top", "front", "right")'),
+      width: z.number().positive().describe('Pocket width (along face U axis) in mm'),
+      length: z.number().positive().describe('Pocket length (along face V axis) in mm'),
+      depth: z.number().positive().describe('Pocket depth in mm'),
+      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+        .describe('3D offset from face center [x,y,z]. Normal component is dropped (projected onto face plane).'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
+        .describe('Feature name for topology (default: auto "pocket_N")'),
+      name: z.string().optional().describe('Optional name for result shape'),
+    },
+    async ({ shape, face_name, width, length, depth, at, feature_name, name }) => {
+      const s = registry.get(shape).shape;
+      const result_shape = pocket(s, face_name, {
+        width,
+        length,
+        depth,
+        at: at as Vec3 | undefined,
+        featureName: feature_name,
+      });
+      const result = registry.create(result_shape, 'pocket', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'create_bolt_circle',
+    'Create N holes arranged on a circular pattern on a named planar face. Composes hole() for each position. Use query_faces first to discover available face names.',
+    {
+      shape: z.string().describe('ID of shape to cut the bolt circle in'),
+      face_name: z.string().describe('Name of the planar face (e.g. "top", "front", "right")'),
+      count: z.number().int().min(1).describe('Number of holes'),
+      bolt_circle_diameter: z.number().positive().describe('Bolt circle diameter (center-to-center) in mm'),
+      hole_diameter: z.number().positive().describe('Individual hole diameter in mm'),
+      depth: z.union([z.number().positive(), z.literal('through')])
+        .describe('Hole depth in mm, or "through" for full penetration'),
+      start_angle: z.number().default(0).describe('Start angle in degrees (default 0 = first hole on face U axis)'),
+      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+        .describe('3D offset for bolt circle center [x,y,z]. Normal component is dropped.'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
+        .describe('Feature name prefix for individual holes (e.g. "mount" → mount_1, mount_2, ...)'),
+      name: z.string().optional().describe('Optional name for result shape'),
+    },
+    async ({ shape, face_name, count, bolt_circle_diameter, hole_diameter, depth, start_angle, at, feature_name, name }) => {
+      const s = registry.get(shape).shape;
+      const result_shape = boltCircle(s, face_name, {
+        count,
+        boltCircleDiameter: bolt_circle_diameter,
+        holeDiameter: hole_diameter,
+        depth,
+        startAngle: start_angle,
+        at: at as Vec3 | undefined,
+        featureName: feature_name,
+      });
+      const result = registry.create(result_shape, 'bolt_circle', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );
 

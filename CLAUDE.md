@@ -6,7 +6,7 @@ An SDF-based geometry kernel with an MCP server that lets LLMs author CAD geomet
 ## Architecture
 - **Monorepo** with npm workspaces
 - `packages/sdf-kernel/` — TypeScript SDF kernel (primitives, booleans, transforms, marching cubes, STL export)
-- `packages/mcp-server/` — MCP server exposing 37 tools for Claude to call directly
+- `packages/mcp-server/` — MCP server exposing 40 tools for Claude to call directly
 - `packages/viewer/` — Vite + Three.js + CodeMirror 6 split-pane viewer (STL display)
 - `docs/` — VISION.md (full roadmap), architecture paper, brainstorms
 - `todos/` — File-based todo tracking (compound-engineering pattern)
@@ -16,14 +16,14 @@ An SDF-based geometry kernel with an MCP server that lets LLMs author CAD geomet
 - `packages/sdf-kernel/src/api.ts` — Fluent API: `box()`, `sphere()`, `cylinder()`, `union()`, `subtract()`
 - `packages/sdf-kernel/src/marching-cubes.ts` — Mesh extraction
 - `packages/sdf-kernel/src/stl.ts` — Binary STL export
-- `packages/mcp-server/src/tools.ts` — 37 MCP tool definitions
+- `packages/mcp-server/src/tools.ts` — 40 MCP tool definitions
 - `packages/mcp-server/src/registry.ts` — In-memory shape registry with readback
 - `packages/viewer/src/main.ts` — Viewer entry point
 - `packages/viewer/src/scene.ts` — Three.js scene, lights, grid, axes
 - `packages/viewer/src/editor.ts` — CodeMirror 6 with teal/gold/copper theme
 
 ## MCP Server
-Registered in `~/.claude.json`. Exposes 37 tools:
+Registered in `~/.claude.json`. Exposes 40 tools:
 - **Primitives (6):** create_box, create_sphere, create_cylinder, create_cone, create_torus, create_plane
 - **2D Profiles (3):** create_polygon, create_circle_2d, create_rect_2d
 - **2D → 3D (2):** extrude, revolve
@@ -35,6 +35,7 @@ Registered in `~/.claude.json`. Exposes 37 tools:
 - **Mesh (2):** compute_mesh, export_mesh
 - **CAM (3):** define_tool, generate_surfacing_toolpath, export_gcode
 - **Topology (4):** query_faces, query_face, classify_point, query_edges
+- **Semantic Features (3):** create_hole, create_pocket, create_bolt_circle
 - **Session (2):** list_shapes, delete_shape
 
 Every tool returns structured JSON readback (shape_id, type, bounds, size, center) — the LLM's "eyes" since it can't see the 3D viewer.
