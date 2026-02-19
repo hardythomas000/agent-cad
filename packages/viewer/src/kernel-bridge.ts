@@ -168,14 +168,19 @@ export function executeCode(code: string): ExecuteResult {
     const _exportSTL = () => null;
 
     // defineTool — create a ToolDefinition for CAM
-    const _defineTool = (opts: { type: 'ballnose'; diameter: number; flute_length?: number; shank_diameter?: number }): ToolDefinition => {
+    // Accepts either positional (type, diameter) or object form
+    const _defineTool = (typeOrOpts: string | { type: string; diameter: number; flute_length?: number; shank_diameter?: number }, diameter?: number): ToolDefinition => {
+      const type = typeof typeOrOpts === 'string' ? typeOrOpts : typeOrOpts.type;
+      const dia = typeof typeOrOpts === 'string' ? diameter! : typeOrOpts.diameter;
+      const flute_length = typeof typeOrOpts === 'object' ? typeOrOpts.flute_length : undefined;
+      const shank_diameter = typeof typeOrOpts === 'object' ? typeOrOpts.shank_diameter : undefined;
       return {
-        name: 'tool',
-        type: opts.type,
-        diameter: opts.diameter,
-        radius: opts.diameter / 2,
-        flute_length: opts.flute_length,
-        shank_diameter: opts.shank_diameter,
+        name: `${type}-D${dia}`,
+        type: type as 'ballnose' | 'flat',
+        diameter: dia,
+        radius: dia / 2,
+        flute_length,
+        shank_diameter,
       };
     };
 

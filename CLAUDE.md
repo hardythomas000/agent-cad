@@ -75,7 +75,7 @@ npm run dev:viewer
 - 3-axis raster surfacing toolpath (drop-cutter based)
 - 2D contour/profile toolpath (marching squares + SDF offset)
 - Fanuc G-code emission (surfacing + contour)
-- 374 tests passing
+- 379 tests passing
 - First LLM-authored geometry demo: bracket with pocket + 2 through-holes (bracket.stl)
 - Viewer v1: Three.js STL viewer + CodeMirror 6 editor + split pane (Vite app)
 - Viewer v2: live kernel connection — editor DSL executes against kernel, mesh renders in viewport (debounced, Ctrl+Enter, error overlay)
@@ -85,11 +85,11 @@ npm run dev:viewer
 - Semantic DSL v2: chamfer(), fillet() — edge operations on named edges (EdgeBreak SDF node)
 - Viewer v3: face highlighting on hover with status bar readout (raycaster + vertex colors)
 - CAM v2: contour toolpath — marching squares contour extraction + SDF-native tool offset
+- Benchmark gates: 5 timed performance gates on marching cubes, raster surfacing, contour toolpath, marching squares
 
 ### Not Started
 - Semantic DSL v3 (constraint solver)
 - B-Rep export (STEP/IGES via OCCT)
-- Benchmark gates (ADR-001 pattern)
 - Validation pipeline
 
 ## Design Principles (from VISION.md)
