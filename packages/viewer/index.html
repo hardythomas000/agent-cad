@@ -363,6 +363,13 @@
     .status-live.error { color: #e06060; }
     .status-live.error::before { background: #e06060; box-shadow: 0 0 4px rgba(224, 96, 96, 0.4); }
 
+    #status-face {
+      color: var(--teal);
+      max-width: 300px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     /* ─── Scrollbar ────────────────────────────── */
 
     ::-webkit-scrollbar { width: 6px; height: 6px; }
@@ -493,6 +500,7 @@
       </div>
       <div id="status-bar">
         <span id="status-mode" class="status-live">Live</span>
+        <span id="status-face"></span>
         <span><span class="status-label">Tris</span> <span id="status-tris">-</span></span>
         <span><span class="status-label">Size</span> <span id="status-dims">-</span></span>
       </div>

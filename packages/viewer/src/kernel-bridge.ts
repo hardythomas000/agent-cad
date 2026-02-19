@@ -65,6 +65,21 @@ export function getGCodeText(): string | null {
   return gcodeText;
 }
 
+// ─── Face map state (for hover highlighting) ───────────────────
+
+export interface FaceMapData {
+  faceIds: Int32Array;        // per-triangle face index
+  faceNames: string[];        // face index → face name
+  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>;
+}
+
+let currentFaceMap: FaceMapData | null = null;
+
+/** Get the face map from the last executeCode() call, if any. */
+export function getFaceMap(): FaceMapData | null {
+  return currentFaceMap;
+}
+
 // All SDF prototype methods that return new SDF nodes.
 // Patched during execution to track the last SDF produced by any operation,
 // including method chains like box(50,50,50).subtract(sphere(30)).
@@ -88,8 +103,10 @@ const SDF_METHODS = [
 export function executeCode(code: string): ExecuteResult {
   let lastSDF: SDF | null = null;
   let meshResult: TriangleMesh | null = null;
+  let meshSDF: SDF | null = null; // Track which SDF was explicitly meshed
   toolpathVisual = null; // Reset each execution
   gcodeText = null;
+  currentFaceMap = null;
 
   // Patch SDF.prototype methods to track the last SDF produced
   const originals = new Map<string, Function>();
@@ -141,6 +158,7 @@ export function executeCode(code: string): ExecuteResult {
     const computeMesh = (shape: SDF, resolution = 2.0): TriangleMesh => {
       const m = marchingCubes(shape, resolution);
       meshResult = m;
+      meshSDF = shape;
       return m;
     };
 
@@ -199,13 +217,13 @@ export function executeCode(code: string): ExecuteResult {
 
     // If computeMesh was called explicitly, use that result
     if (meshResult) {
-      return meshToResult(meshResult);
+      return meshToResult(meshResult, meshSDF ?? undefined);
     }
 
     // Otherwise auto-mesh the last SDF at resolution 2.0
     if (lastSDF) {
       const m = marchingCubes(lastSDF, 2.0);
-      return meshToResult(m);
+      return meshToResult(m, lastSDF);
     }
 
     return { error: 'No geometry produced. Assign a shape (e.g. box(50,50,50)).' };
@@ -220,7 +238,7 @@ export function executeCode(code: string): ExecuteResult {
 }
 
 /** Convert kernel TriangleMesh to Three.js BufferGeometry + Mesh + Edges. */
-function meshToResult(triMesh: TriangleMesh): ExecuteResult {
+function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   if (triMesh.triangleCount === 0) {
     return { error: 'Mesh has 0 triangles. Check shape dimensions.' };
   }
@@ -240,12 +258,18 @@ function meshToResult(triMesh: TriangleMesh): ExecuteResult {
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 
-  // Gold material matching existing aesthetic
+  // Vertex colors for face highlighting (default white = no tint)
+  const colors = new Float32Array(positions.length);
+  colors.fill(1.0);
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+  // Gold material with vertex colors enabled
   const material = new THREE.MeshStandardMaterial({
     color: HEX.geometry,
     metalness: 0.3,
     roughness: 0.5,
     side: THREE.DoubleSide,
+    vertexColors: true,
   });
   const mesh = new THREE.Mesh(geometry, material);
 
@@ -269,6 +293,45 @@ function meshToResult(triMesh: TriangleMesh): ExecuteResult {
 
   const bounds = new THREE.Box3();
   bounds.setFromBufferAttribute(geometry.getAttribute('position') as THREE.BufferAttribute);
+
+  // ─── Face classification (for hover highlighting) ─────────────
+  if (sdf && triMesh.triangleCount <= 200_000) {
+    const faceIds = new Int32Array(triMesh.triangleCount);
+    const faceNames: string[] = [];
+    const faceNameToId = new Map<string, number>();
+    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>();
+
+    // Pre-fetch all face descriptors for status bar info
+    const allFaces = sdf.faces();
+    const faceByName = new Map(allFaces.map(f => [f.name, f]));
+
+    for (let i = 0; i < triMesh.triangleCount; i++) {
+      const base = i * 9;
+      const cx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3;
+      const cy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3;
+      const cz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3;
+      const faceName = sdf.classifyPoint([cx, cy, cz]) ?? '__unknown__';
+
+      let id = faceNameToId.get(faceName);
+      if (id === undefined) {
+        id = faceNames.length;
+        faceNames.push(faceName);
+        faceNameToId.set(faceName, id);
+        const desc = faceByName.get(faceName);
+        if (desc) {
+          faceInfo.set(faceName, {
+            kind: desc.kind,
+            origin: desc.origin as [number, number, number] | undefined,
+            radius: desc.radius,
+          });
+        }
+      }
+      faceIds[i] = id;
+    }
+    currentFaceMap = { faceIds, faceNames, faceInfo };
+  } else {
+    currentFaceMap = null;
+  }
 
   return {
     geometry,
