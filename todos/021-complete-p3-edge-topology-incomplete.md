@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p3
 issue_id: "021"
 tags: [code-review, named-topology, architecture, agent-native]
@@ -42,10 +42,11 @@ Edge topology is partially implemented in the kernel but has multiple gaps and n
 
 ## Recommended Action
 
-TBD — needs user decision on scope.
+Option A chosen (complete and expose edges). Extrude/Revolve leaf edges deferred per plan review consensus (YAGNI — no consumer until edge-following toolpaths).
 
 ## Work Log
 
 | Date | Action | Notes |
 |------|--------|-------|
 | 2026-02-19 | Created | Contentious finding — agents disagree |
+| 2026-02-19 | Resolved | Brainstorm → plan → plan review → implementation. Commit 087254f. mergeEdges(), smooth booleans, shell, query_edges MCP tool. 21 new tests (283 total). |
