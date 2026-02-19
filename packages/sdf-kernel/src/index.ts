@@ -37,7 +37,7 @@ export type { GCodeConfig } from './gcode.js';
 export { emitFanucGCode } from './gcode.js';
 
 // Feature constructors (semantic DSL)
-export { hole, pocket, boltCircle } from './features.js';
+export { hole, pocket, boltCircle, chamfer, fillet } from './features.js';
 export type { HoleOptions, PocketOptions, BoltCircleOptions } from './features.js';
 
 // Tool library
@@ -51,6 +51,7 @@ export {
   SmoothUnion, SmoothSubtract, SmoothIntersect,
   Translate, RotateAxis, Scale, Mirror,
   Shell, Round, Elongate,
+  EdgeBreak,
   Extrude, Revolve,
 } from './sdf.js';
 export { Polygon2D, Circle2D, Rect2D } from './sdf2d.js';

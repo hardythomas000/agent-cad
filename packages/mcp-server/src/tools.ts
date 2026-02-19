@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 40 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 42 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -12,7 +12,7 @@ import {
   polygon, circle2d, rect2d, extrude, revolve,
   marchingCubes, exportSTL,
   generateRasterSurfacing, emitFanucGCode,
-  hole, pocket, boltCircle,
+  hole, pocket, boltCircle, chamfer, fillet,
   type SDF, type TriangleMesh,
   type ToolDefinition,
 } from '@agent-cad/sdf-kernel';
@@ -820,6 +820,46 @@ export function registerTools(server: McpServer): void {
         featureName: feature_name,
       });
       const result = registry.create(result_shape, 'bolt_circle', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  // ─── Edge Operations (2) ─────────────────────────────────────
+
+  server.tool(
+    'chamfer_edge',
+    'Create a chamfer (flat bevel) on a named edge. Only axis-aligned planar-planar edges supported. Use query_edges first to discover available edge names.',
+    {
+      shape: z.string().describe('ID of shape to chamfer'),
+      edge_name: z.string().describe('Name of the edge (e.g. "top.right", "front.left")'),
+      size: z.number().positive().describe('Chamfer leg size in mm (symmetric 45-degree bevel)'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
+        .describe('Feature name for topology (default: auto "chamfer_N")'),
+      name: z.string().optional().describe('Optional name for result shape'),
+    },
+    async ({ shape, edge_name, size, feature_name, name }) => {
+      const s = registry.get(shape).shape;
+      const result_shape = chamfer(s, edge_name, size, feature_name);
+      const result = registry.create(result_shape, 'chamfer', name);
+      return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+    }
+  );
+
+  server.tool(
+    'fillet_edge',
+    'Create a fillet (circular blend) on a named edge. Only axis-aligned planar-planar edges supported. Use query_edges first to discover available edge names.',
+    {
+      shape: z.string().describe('ID of shape to fillet'),
+      edge_name: z.string().describe('Name of the edge (e.g. "top.right", "front.left")'),
+      radius: z.number().positive().describe('Fillet radius in mm'),
+      feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
+        .describe('Feature name for topology (default: auto "fillet_N")'),
+      name: z.string().optional().describe('Optional name for result shape'),
+    },
+    async ({ shape, edge_name, radius, feature_name, name }) => {
+      const s = registry.get(shape).shape;
+      const result_shape = fillet(s, edge_name, radius, feature_name);
+      const result = registry.create(result_shape, 'fillet', name);
       return { content: [{ type: 'text', text: JSON.stringify(result) }] };
     }
   );

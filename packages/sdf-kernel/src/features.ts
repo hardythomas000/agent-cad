@@ -7,8 +7,9 @@
  * The LLM declares intent; the kernel resolves geometry.
  */
 
-import { SDF, Box, Cylinder } from './sdf.js';
+import { SDF, Box, Cylinder, EdgeBreak } from './sdf.js';
 import type { Vec3 } from './vec3.js';
+import type { EdgeDescriptor, FaceDescriptor } from './topology.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
@@ -254,6 +255,99 @@ function orientToAxis(shape: SDF, normal: Vec3, callerName: string): SDF {
     `${callerName}() only supports axis-aligned faces in v1. ` +
     `Normal [${nx}, ${ny}, ${nz}] is not axis-aligned.`
   );
+}
+
+// ─── chamfer() ──────────────────────────────────────────────────
+
+/**
+ * Create a chamfer (flat bevel) on a named edge.
+ * Returns a new SDF with the edge chamfered.
+ *
+ * Only axis-aligned planar-planar edges in v1.
+ */
+export function chamfer(shape: SDF, edgeName: string, size: number, featureName?: string): SDF {
+  if (size <= 0) {
+    throw new Error(`chamfer() size must be positive, got ${size}`);
+  }
+  const { faceA, faceB } = resolveEdge(shape, edgeName, 'chamfer');
+  const name = featureName ?? nextFeatureName(shape, 'chamfer');
+  return new EdgeBreak(
+    shape,
+    { normal: faceA.normal, origin: faceA.origin! },
+    { normal: faceB.normal, origin: faceB.origin! },
+    size, 'chamfer', name, edgeName,
+  );
+}
+
+// ─── fillet() ───────────────────────────────────────────────────
+
+/**
+ * Create a fillet (circular blend) on a named edge.
+ * Returns a new SDF with the edge filleted.
+ *
+ * Only axis-aligned planar-planar edges in v1.
+ */
+export function fillet(shape: SDF, edgeName: string, radius: number, featureName?: string): SDF {
+  if (radius <= 0) {
+    throw new Error(`fillet() radius must be positive, got ${radius}`);
+  }
+  const { faceA, faceB } = resolveEdge(shape, edgeName, 'fillet');
+  const name = featureName ?? nextFeatureName(shape, 'fillet');
+  return new EdgeBreak(
+    shape,
+    { normal: faceA.normal, origin: faceA.origin! },
+    { normal: faceB.normal, origin: faceB.origin! },
+    radius, 'fillet', name, edgeName,
+  );
+}
+
+// ─── resolveEdge() (private) ────────────────────────────────────
+
+/** Resolve an edge name to its two planar face descriptors, or throw with helpful error. */
+function resolveEdge(
+  shape: SDF,
+  edgeName: string,
+  callerName: string,
+): { edge: EdgeDescriptor; faceA: FaceDescriptor; faceB: FaceDescriptor } {
+  const allEdges = shape.edges();
+  const edge = allEdges.find(e => e.name === edgeName);
+  if (!edge) {
+    throw new Error(
+      `${callerName}() edge "${edgeName}" not found. ` +
+      `Available edges: [${allEdges.map(e => e.name).join(', ')}]`
+    );
+  }
+
+  const faceA = shape.faces().find(f => f.name === edge.faces[0]);
+  const faceB = shape.faces().find(f => f.name === edge.faces[1]);
+  if (!faceA || !faceB) {
+    throw new Error(
+      `${callerName}() could not resolve faces for edge "${edgeName}". ` +
+      `Expected faces "${edge.faces[0]}" and "${edge.faces[1]}".`
+    );
+  }
+
+  if (faceA.kind !== 'planar' || faceB.kind !== 'planar') {
+    const planarEdges = allEdges.filter(e => {
+      const fa = shape.faces().find(f => f.name === e.faces[0]);
+      const fb = shape.faces().find(f => f.name === e.faces[1]);
+      return fa?.kind === 'planar' && fb?.kind === 'planar';
+    });
+    throw new Error(
+      `${callerName}() requires a planar-planar edge, but "${edgeName}" has ` +
+      `${faceA.kind} ("${faceA.name}") and ${faceB.kind} ("${faceB.name}"). ` +
+      `Available planar edges: [${planarEdges.map(e => e.name).join(', ')}]`
+    );
+  }
+
+  if (!faceA.origin || !faceB.origin) {
+    throw new Error(
+      `${callerName}() requires both faces of edge "${edgeName}" to have origins. ` +
+      `This is likely a kernel bug — planar faces should always report an origin.`
+    );
+  }
+
+  return { edge, faceA, faceB };
 }
 
 /**

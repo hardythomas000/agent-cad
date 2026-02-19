@@ -15,6 +15,8 @@ import {
   hole,
   pocket,
   boltCircle,
+  chamfer,
+  fillet,
   findTool,
   listTools,
   listLibraries,
@@ -129,6 +131,12 @@ export function executeCode(code: string): ExecuteResult {
     const _pocket = (shape: SDF, face: string, opts: PocketOptions) => track(pocket(shape, face, opts));
     const _boltCircle = (shape: SDF, face: string, opts: BoltCircleOptions) => track(boltCircle(shape, face, opts));
 
+    // Edge operations
+    const _chamfer = (shape: SDF, edge: string, size: number, name?: string) =>
+      track(chamfer(shape, edge, size, name));
+    const _fillet = (shape: SDF, edge: string, radius: number, name?: string) =>
+      track(fillet(shape, edge, radius, name));
+
     // computeMesh — explicit mesh generation
     const computeMesh = (shape: SDF, resolution = 2.0): TriangleMesh => {
       const m = marchingCubes(shape, resolution);
@@ -173,6 +181,7 @@ export function executeCode(code: string): ExecuteResult {
       'computeMesh', 'exportSTL',
       'defineTool', 'showToolpath',
       'hole', 'pocket', 'boltCircle',
+      'chamfer', 'fillet',
       'findTool', 'listTools', 'listLibraries',
       code,
     );
@@ -184,6 +193,7 @@ export function executeCode(code: string): ExecuteResult {
       computeMesh, _exportSTL,
       _defineTool, _showToolpath,
       _hole, _pocket, _boltCircle,
+      _chamfer, _fillet,
       findTool, listTools, listLibraries,
     );
 

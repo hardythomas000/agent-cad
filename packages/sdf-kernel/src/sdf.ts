@@ -995,6 +995,88 @@ export class Elongate extends SDF {
   children(): SDF[] { return [this.child]; }
 }
 
+export class EdgeBreak extends SDF {
+  readonly kind = 'edge_break' as const;
+
+  constructor(
+    readonly child: SDF,
+    readonly faceA: { normal: Vec3; origin: Vec3 },
+    readonly faceB: { normal: Vec3; origin: Vec3 },
+    readonly size: number,
+    readonly mode: 'chamfer' | 'fillet',
+    readonly featureName: string,
+    readonly removedEdgeName: string,
+  ) {
+    super();
+  }
+
+  get name() {
+    return `${this.child.name}.${this.mode}(${this.removedEdgeName}, ${this.size})`;
+  }
+
+  evaluate(p: Vec3): number {
+    const dA = dot(sub(p, this.faceA.origin), this.faceA.normal);
+    const dB = dot(sub(p, this.faceB.origin), this.faceB.normal);
+    const childVal = this.child.evaluate(p);
+
+    if (this.mode === 'chamfer') {
+      const cut = (dA + dB + this.size) / Math.SQRT2;
+      return Math.max(childVal, cut);
+    }
+
+    // Fillet: circular blend centered at edge
+    const r = this.size;
+    const inA = Math.max(0, Math.min(-dA, r));
+    const inB = Math.max(0, Math.min(-dB, r));
+    const cut = r - Math.sqrt(inA * inA + inB * inB);
+    return Math.max(childVal, cut);
+  }
+
+  bounds(): BoundingBox {
+    return this.child.bounds(); // Conservative: break only removes material
+  }
+
+  faces(): FaceDescriptor[] {
+    const childFaces = this.child.faces();
+    return [
+      ...childFaces,
+      {
+        name: `${this.featureName}.face`,
+        normal: normalize(add(this.faceA.normal, this.faceB.normal)),
+        kind: 'freeform' as const,
+      },
+    ];
+  }
+
+  edges(): EdgeDescriptor[] {
+    return this.child.edges().filter(e => e.name !== this.removedEdgeName);
+  }
+
+  classifyPoint(p: Vec3): string | null {
+    const dA = dot(sub(p, this.faceA.origin), this.faceA.normal);
+    const dB = dot(sub(p, this.faceB.origin), this.faceB.normal);
+
+    // In the edge-break region: both faces are nearby and inside
+    const r = this.size;
+    if (dA < 0 && dB < 0 && -dA < r && -dB < r) {
+      // Check if the break cut is the dominant surface here
+      const inA = Math.min(-dA, r);
+      const inB = Math.min(-dB, r);
+      const cut = this.mode === 'chamfer'
+        ? (dA + dB + r) / Math.SQRT2
+        : r - Math.sqrt(inA * inA + inB * inB);
+      const childVal = this.child.evaluate(p);
+      if (cut > childVal - 0.01) {
+        return `${this.featureName}.face`;
+      }
+    }
+
+    return this.child.classifyPoint(p);
+  }
+
+  children(): SDF[] { return [this.child]; }
+}
+
 // ─── 2D → 3D Bridge ────────────────────────────────────────────
 
 /**

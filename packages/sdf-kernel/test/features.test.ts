@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { box, cylinder, hole, pocket, boltCircle } from '../src/index.js';
+import { box, cylinder, hole, pocket, boltCircle, chamfer, fillet } from '../src/index.js';
 import type { Vec3 } from '../src/index.js';
 
 const EPSILON = 0.5; // SDF tolerance for marching cubes grid alignment
@@ -414,5 +414,249 @@ describe('nextFeatureName — non-sequential numbering', () => {
     const step3 = hole(step2, 'top', { diameter: 6, depth: 'through', at: [-20, 0, 0] }); // should be hole_4 (not hole_3!)
     const faceNames = step3.faces().map(f => f.name);
     expect(faceNames.some(n => n.startsWith('hole_4.'))).toBe(true);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// chamfer() tests
+// ═══════════════════════════════════════════════════════════════
+
+describe('chamfer() — basic edge operations', () => {
+  const b = box(100, 60, 30); // half-extents: 50, 30, 15
+
+  it('chamfer top.right edge removes material at edge', () => {
+    const result = chamfer(b, 'top.right', 5);
+    // At the edge (50, 30, 0) — material should be removed (positive SDF)
+    expect(result.evaluate([50, 30, 0])).toBeGreaterThan(0);
+    // Inside box, away from edge — should still be solid
+    expect(result.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+
+  it('chamfer plane passes through correct tangent points', () => {
+    const result = chamfer(b, 'top.right', 5);
+    // Chamfer plane tangent point on top face: (50-5, 30, 0) = (45, 30, 0)
+    // At that point, dA=0, dB=-5 → cut = (0 + (-5) + 5)/√2 = 0
+    expect(Math.abs(result.evaluate([45, 30, 0]))).toBeLessThan(EPSILON);
+    // Tangent on right face: (50, 30-5, 0) = (50, 25, 0)
+    expect(Math.abs(result.evaluate([50, 25, 0]))).toBeLessThan(EPSILON);
+  });
+
+  it('chamfer top.left edge', () => {
+    const result = chamfer(b, 'top.left', 3);
+    // Edge at (-50, 30, 0)
+    expect(result.evaluate([-50, 30, 0])).toBeGreaterThan(0);
+    expect(result.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+
+  it('chamfer bottom.front edge', () => {
+    const result = chamfer(b, 'bottom.front', 4);
+    // Edge at (0, -30, 15)
+    expect(result.evaluate([0, -30, 15])).toBeGreaterThan(0);
+    expect(result.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+
+  it('chamfer front.right edge', () => {
+    const result = chamfer(b, 'front.right', 5);
+    // Edge at (50, 0, 15)
+    expect(result.evaluate([50, 0, 15])).toBeGreaterThan(0);
+    expect(result.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+});
+
+describe('chamfer() — sequential chamfers', () => {
+  it('two chamfers on same shape', () => {
+    const b = box(100, 60, 30);
+    const step1 = chamfer(b, 'top.right', 5);
+    const step2 = chamfer(step1, 'top.left', 5);
+    // Both edges should be chamfered
+    expect(step2.evaluate([50, 30, 0])).toBeGreaterThan(0);
+    expect(step2.evaluate([-50, 30, 0])).toBeGreaterThan(0);
+    // Center should still be solid
+    expect(step2.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+});
+
+describe('chamfer() — topology', () => {
+  it('removes target edge from edges()', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5);
+    const edgeNames = result.edges().map(e => e.name);
+    expect(edgeNames).not.toContain('top.right');
+    // Other edges should still exist
+    expect(edgeNames).toContain('top.left');
+    expect(edgeNames).toContain('top.front');
+  });
+
+  it('adds new face to faces()', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5);
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('chamfer_1.'))).toBe(true);
+  });
+
+  it('new face is freeform kind', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5);
+    const breakFace = result.faces().find(f => f.name.startsWith('chamfer_1.'));
+    expect(breakFace?.kind).toBe('freeform');
+  });
+});
+
+describe('chamfer() — feature naming', () => {
+  it('auto-names first chamfer as chamfer_1', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5);
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('chamfer_1.'))).toBe(true);
+  });
+
+  it('custom feature name', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5, 'bevel');
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('bevel.'))).toBe(true);
+  });
+});
+
+describe('chamfer() — error handling', () => {
+  it('rejects non-existent edge', () => {
+    const b = box(100, 60, 30);
+    expect(() => chamfer(b, 'top.nonexistent', 5))
+      .toThrow(/not found/);
+  });
+
+  it('error lists available edges', () => {
+    const b = box(100, 60, 30);
+    expect(() => chamfer(b, 'fake', 5))
+      .toThrow(/top\.right/);
+  });
+
+  it('rejects non-planar edge', () => {
+    const c = cylinder(20, 40);
+    expect(() => chamfer(c, 'top_cap.barrel', 3))
+      .toThrow(/planar/);
+  });
+
+  it('rejects zero size', () => {
+    const b = box(100, 60, 30);
+    expect(() => chamfer(b, 'top.right', 0))
+      .toThrow(/positive/);
+  });
+
+  it('rejects negative size', () => {
+    const b = box(100, 60, 30);
+    expect(() => chamfer(b, 'top.right', -3))
+      .toThrow(/positive/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// fillet() tests
+// ═══════════════════════════════════════════════════════════════
+
+describe('fillet() — basic edge operations', () => {
+  const b = box(100, 60, 30); // half-extents: 50, 30, 15
+
+  it('fillet top.front edge removes material at edge', () => {
+    const result = fillet(b, 'top.front', 5);
+    // At the edge (0, 30, 15) — material should be removed
+    expect(result.evaluate([0, 30, 15])).toBeGreaterThan(0);
+    // Inside box, away from edge — should still be solid
+    expect(result.evaluate([0, 0, 0])).toBeLessThan(0);
+  });
+
+  it('fillet is tangent to both faces at radius distance', () => {
+    const result = fillet(b, 'top.right', 5);
+    // Tangent point on top face at R from right: (50-5, 30, 0) = (45, 30, 0)
+    // dA = 0, dB = -5 → inA=0, inB=5 → cut = 5 - sqrt(0+25) = 0
+    expect(Math.abs(result.evaluate([45, 30, 0]))).toBeLessThan(EPSILON);
+    // Tangent point on right face at R from top: (50, 30-5, 0) = (50, 25, 0)
+    expect(Math.abs(result.evaluate([50, 25, 0]))).toBeLessThan(EPSILON);
+  });
+
+  it('fillet distance accuracy — midpoint check', () => {
+    const result = fillet(b, 'top.right', 5);
+    // At the 45° point: dA = -2.5, dB = -2.5
+    const p: Vec3 = [47.5, 27.5, 0];
+    const val = result.evaluate(p);
+    // Should be positive (material removed in this region)
+    expect(val).toBeGreaterThan(0);
+    // The fillet cut value should be: 5 - sqrt(2.5^2 + 2.5^2) = 5 - 3.536 ≈ 1.464
+    // Box SDF at this point is negative (inside), so result = fillet_cut
+    expect(val).toBeCloseTo(5 - Math.sqrt(2 * 2.5 * 2.5), 0.5);
+  });
+});
+
+describe('fillet() — topology', () => {
+  it('removes target edge from edges()', () => {
+    const b = box(100, 60, 30);
+    const result = fillet(b, 'top.front', 5);
+    const edgeNames = result.edges().map(e => e.name);
+    expect(edgeNames).not.toContain('top.front');
+    expect(edgeNames).toContain('top.right');
+  });
+
+  it('adds fillet face', () => {
+    const b = box(100, 60, 30);
+    const result = fillet(b, 'top.front', 5);
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('fillet_1.'))).toBe(true);
+  });
+});
+
+describe('fillet() — feature naming', () => {
+  it('auto-names first fillet as fillet_1', () => {
+    const b = box(100, 60, 30);
+    const result = fillet(b, 'top.right', 5);
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('fillet_1.'))).toBe(true);
+  });
+
+  it('custom feature name', () => {
+    const b = box(100, 60, 30);
+    const result = fillet(b, 'top.right', 5, 'round_edge');
+    const faceNames = result.faces().map(f => f.name);
+    expect(faceNames.some(n => n.startsWith('round_edge.'))).toBe(true);
+  });
+});
+
+describe('fillet() — error handling', () => {
+  it('rejects non-existent edge', () => {
+    const b = box(100, 60, 30);
+    expect(() => fillet(b, 'top.nonexistent', 5))
+      .toThrow(/not found/);
+  });
+
+  it('rejects non-planar edge', () => {
+    const c = cylinder(20, 40);
+    expect(() => fillet(c, 'top_cap.barrel', 3))
+      .toThrow(/planar/);
+  });
+
+  it('rejects zero radius', () => {
+    const b = box(100, 60, 30);
+    expect(() => fillet(b, 'top.right', 0))
+      .toThrow(/positive/);
+  });
+
+  it('error message says fillet(), not chamfer()', () => {
+    const c = cylinder(20, 40);
+    expect(() => fillet(c, 'top_cap.barrel', 3))
+      .toThrow(/fillet\(\)/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// chamfer/fillet after boolean subtract
+// ═══════════════════════════════════════════════════════════════
+
+describe('chamfer/fillet — after boolean operations', () => {
+  it('chamfer on a box after hole subtraction still works on original edges', () => {
+    const b = box(100, 60, 30);
+    const withHole = hole(b, 'top', { diameter: 10, depth: 'through' });
+    // Original box edges still exist
+    const result = chamfer(withHole, 'top.right', 3);
+    expect(result.evaluate([50, 30, 0])).toBeGreaterThan(0);
+    expect(result.evaluate([0, 0, 0])).toBeGreaterThan(0); // hole cavity
   });
 });
