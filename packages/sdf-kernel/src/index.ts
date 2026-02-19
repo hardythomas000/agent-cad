@@ -37,8 +37,8 @@ export type { GCodeConfig } from './gcode.js';
 export { emitFanucGCode } from './gcode.js';
 
 // Feature constructors (semantic DSL)
-export { hole } from './features.js';
-export type { HoleOptions } from './features.js';
+export { hole, pocket, boltCircle } from './features.js';
+export type { HoleOptions, PocketOptions, BoltCircleOptions } from './features.js';
 
 // Tool library
 export { findTool, listTools, listLibraries } from './tool-library.js';

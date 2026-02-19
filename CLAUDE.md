@@ -44,7 +44,7 @@ Every tool returns structured JSON readback (shape_id, type, bounds, size, cente
 # Build everything
 npm run build
 
-# Run tests (283 passing)
+# Run tests (325 passing)
 npm test
 
 # Build just the kernel
@@ -61,7 +61,7 @@ npm run dev:viewer
 # or: cd packages/viewer && npm run dev
 ```
 
-## Status (as of 2026-02-19)
+## Status (as of 2026-02-20)
 ### Done
 - SDF kernel with 6 primitives, 3 booleans (+ smooth variants), 4 transforms, 3 modifiers
 - 2D profiles: polygon, circle2d, rect2d + extrude/revolve (drawing→SDF bridge)
@@ -72,15 +72,16 @@ npm run dev:viewer
 - Root finding (sphere tracing + bisection)
 - 3-axis raster surfacing toolpath (drop-cutter based)
 - Fanuc G-code emission
-- 283 tests passing
+- 325 tests passing
 - First LLM-authored geometry demo: bracket with pocket + 2 through-holes (bracket.stl)
 - Viewer v1: Three.js STL viewer + CodeMirror 6 editor + split pane (Vite app)
 - Viewer v2: live kernel connection — editor DSL executes against kernel, mesh renders in viewport (debounced, Ctrl+Enter, error overlay)
 - Named topology: analytical face/edge identity for all 20 SDF node classes (faces, edges, classifyPoint)
 - Edge topology completion: mergeEdges, smooth boolean propagation, shell doubling, query_edges MCP tool
+- Semantic DSL v1: hole(), pocket(), boltCircle() — intent-based features on named faces
 
 ### Not Started
-- Semantic DSL (constraint solver)
+- Semantic DSL v3 (constraint solver, edge references)
 - B-Rep export (STEP/IGES via OCCT)
 - Benchmark gates (ADR-001 pattern)
 - Validation pipeline

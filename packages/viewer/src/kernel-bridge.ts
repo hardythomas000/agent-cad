@@ -13,6 +13,8 @@ import {
   generateRasterSurfacing,
   emitFanucGCode,
   hole,
+  pocket,
+  boltCircle,
   findTool,
   listTools,
   listLibraries,
@@ -21,6 +23,8 @@ import {
   type ToolDefinition,
   type ToolpathParams,
   type HoleOptions,
+  type PocketOptions,
+  type BoltCircleOptions,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
 import { renderToolpath } from './toolpath-renderer.js';
@@ -122,6 +126,8 @@ export function executeCode(code: string): ExecuteResult {
 
     // Semantic feature constructors
     const _hole = (shape: SDF, face: string, opts: HoleOptions) => track(hole(shape, face, opts));
+    const _pocket = (shape: SDF, face: string, opts: PocketOptions) => track(pocket(shape, face, opts));
+    const _boltCircle = (shape: SDF, face: string, opts: BoltCircleOptions) => track(boltCircle(shape, face, opts));
 
     // computeMesh — explicit mesh generation
     const computeMesh = (shape: SDF, resolution = 2.0): TriangleMesh => {
@@ -166,7 +172,7 @@ export function executeCode(code: string): ExecuteResult {
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
       'defineTool', 'showToolpath',
-      'hole',
+      'hole', 'pocket', 'boltCircle',
       'findTool', 'listTools', 'listLibraries',
       code,
     );
@@ -177,7 +183,7 @@ export function executeCode(code: string): ExecuteResult {
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
       _defineTool, _showToolpath,
-      _hole,
+      _hole, _pocket, _boltCircle,
       findTool, listTools, listLibraries,
     );
 
