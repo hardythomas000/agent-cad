@@ -12,6 +12,7 @@ import {
   marchingCubes,
   generateRasterSurfacing,
   generateContourToolpath,
+  generateMultiLevelContour,
   emitFanucGCode,
   hole,
   pocket,
@@ -26,6 +27,7 @@ import {
   type ToolDefinition,
   type ToolpathParams,
   type ContourToolpathParams,
+  type MultiLevelContourParams,
   type HoleOptions,
   type PocketOptions,
   type BoltCircleOptions,
@@ -214,12 +216,27 @@ export function executeCode(code: string): ExecuteResult {
       console.log('Contour stats:', result.stats, 'loops:', result.loop_count);
     };
 
+    // showMultiLevelContour — generate and render waterline roughing
+    const _showMultiLevelContour = (shape: SDF, tool: ToolDefinition, params: Partial<MultiLevelContourParams> & { z_top: number; z_bottom: number; step_down: number; feed_rate: number; rpm: number; safe_z: number }) => {
+      const fullParams: MultiLevelContourParams = {
+        direction: 'climb',
+        point_spacing: 0.5,
+        resolution: 1.0,
+        ...params,
+      };
+      const tp = generateMultiLevelContour(shape, tool, fullParams);
+      const result = { ...tp, id: 'live' };
+      toolpathVisual = renderToolpath(result);
+      gcodeText = emitFanucGCode(result);
+      console.log('Multi-level contour stats:', result.stats, 'loops:', result.loop_count);
+    };
+
     const fn = new Function(
       'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
       'polygon', 'circle2d', 'rect2d', 'extrude', 'revolve',
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
-      'defineTool', 'showToolpath', 'showContour',
+      'defineTool', 'showToolpath', 'showContour', 'showMultiLevelContour',
       'hole', 'pocket', 'boltCircle',
       'chamfer', 'fillet',
       'findTool', 'listTools', 'listLibraries',
@@ -231,7 +248,7 @@ export function executeCode(code: string): ExecuteResult {
       _polygon, _circle2d, _rect2d, _extrude, _revolve,
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
-      _defineTool, _showToolpath, _showContour,
+      _defineTool, _showToolpath, _showContour, _showMultiLevelContour,
       _hole, _pocket, _boltCircle,
       _chamfer, _fillet,
       findTool, listTools, listLibraries,

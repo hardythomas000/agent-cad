@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { box, sphere, cylinder, subtract } from '../src/api.js';
-import { generateRasterSurfacing, generateContourToolpath } from '../src/toolpath.js';
+import { generateRasterSurfacing, generateContourToolpath, generateMultiLevelContour } from '../src/toolpath.js';
 import { emitFanucGCode } from '../src/gcode.js';
-import type { ToolDefinition, ToolpathParams, ContourToolpathParams } from '../src/toolpath.js';
+import type { ToolDefinition, ToolpathParams, ContourToolpathParams, MultiLevelContourParams } from '../src/toolpath.js';
 
 const EPSILON = 0.1; // Toolpath accuracy depends on bounds estimation + surface finding
 
@@ -460,6 +460,221 @@ describe('generateContourToolpath', () => {
       expect(result.stats.cut_distance_mm).toBeGreaterThan(0);
       expect(result.stats.z_min).toBe(0);
       expect(result.stats.z_max).toBe(0);
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// generateMultiLevelContour
+// ═══════════════════════════════════════════════════════════════
+
+function makeMultiLevelParams(overrides?: Partial<MultiLevelContourParams>): MultiLevelContourParams {
+  return {
+    z_top: 20,
+    z_bottom: -20,
+    step_down: 10,
+    feed_rate: 1000,
+    rpm: 8000,
+    safe_z: 50,
+    ...overrides,
+  };
+}
+
+describe('generateMultiLevelContour', () => {
+
+  describe('box — basic multi-level', () => {
+    // Box 100×60×30: SDF Y range -30..30
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10); // R=5
+
+    it('produces points at multiple Z levels', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: -20,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.points.length).toBeGreaterThan(0);
+      expect(result.loop_count).toBeGreaterThanOrEqual(3); // 20, 10, 0, -10, -20 = 5 levels
+
+      // Verify cut points exist at multiple distinct Y values
+      const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
+      const yValues = new Set(cutPoints.map(p => p.y));
+      expect(yValues.size).toBeGreaterThanOrEqual(3);
+    });
+
+    it('produces levels from z_top down to z_bottom', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
+      const yValues = [...new Set(cutPoints.map(p => p.y))].sort((a, b) => b - a);
+
+      // Should have levels at 20, 10, 0
+      expect(yValues.length).toBe(3);
+      near(yValues[0], 20, 0.01);
+      near(yValues[1], 10, 0.01);
+      near(yValues[2], 0, 0.01);
+    });
+  });
+
+  describe('stats and bounds', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('stats reflect multi-level totals', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.stats.point_count).toBe(result.points.length);
+      expect(result.stats.cut_distance_mm).toBeGreaterThan(0);
+      expect(result.stats.z_min).toBeLessThanOrEqual(-10);
+      expect(result.stats.z_max).toBeGreaterThanOrEqual(10);
+    });
+
+    it('bounds span all levels', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.bounds.y[0]).toBeLessThanOrEqual(-10);
+      expect(result.bounds.y[1]).toBeGreaterThanOrEqual(20);
+    });
+  });
+
+  describe('leave_stock offset', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10); // R=5
+
+    it('contour is further from shape with leave_stock', () => {
+      const noStock = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 1.0,
+      }));
+      const withStock = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        leave_stock: 2,
+        resolution: 1.0,
+      }));
+
+      // Both should produce contours
+      const noCuts = noStock.points.filter(p => p.type === 'cut');
+      const stockCuts = withStock.points.filter(p => p.type === 'cut');
+      expect(noCuts.length).toBeGreaterThan(0);
+      expect(stockCuts.length).toBeGreaterThan(0);
+
+      // With leave_stock, max X of contour should be larger (further from shape)
+      const noXMax = Math.max(...noCuts.map(p => p.x));
+      const stockXMax = Math.max(...stockCuts.map(p => p.x));
+      expect(stockXMax).toBeGreaterThan(noXMax);
+    });
+  });
+
+  describe('safe Z retracts between levels', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('rapids to safe_z between every loop', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        safe_z: 50,
+        resolution: 2.0,
+      }));
+
+      // Count retract moves (rapid to safe_z after cutting)
+      let retractCount = 0;
+      for (let i = 1; i < result.points.length; i++) {
+        if (result.points[i].type === 'rapid' && result.points[i].y === 50 &&
+            (result.points[i - 1].type === 'cut')) {
+          retractCount++;
+        }
+      }
+      // Should have one retract per loop
+      expect(retractCount).toBe(result.loop_count);
+    });
+  });
+
+  describe('validation', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('throws if step_down is zero', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        step_down: 0,
+      }))).toThrow(/step_down/);
+    });
+
+    it('throws if z_top < z_bottom', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: -10,
+        z_bottom: 10,
+      }))).toThrow(/z_top.*z_bottom/);
+    });
+
+    it('throws if safe_z <= z_top', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 50,
+        z_bottom: 0,
+        safe_z: 50,
+      }))).toThrow(/safe_z.*z_top/);
+    });
+  });
+
+  describe('G-code export', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('produces valid G-code from multi-level result', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const gcode = emitFanucGCode({ ...result, id: 'test-multilevel' });
+      expect(gcode).toContain('%');
+      expect(gcode).toContain('G90');
+      expect(gcode).toContain('G01');
+      expect(gcode).toContain('M30');
+    });
+  });
+
+  describe('single level when z_top === z_bottom', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('degenerates to single-level contour', () => {
+      const multi = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const single = generateContourToolpath(shape, tool, makeContourParams({
+        z_level: 0,
+        resolution: 2.0,
+      }));
+
+      // Same number of loops
+      expect(multi.loop_count).toBe(single.loop_count);
+      // Similar cut point count (exact match not guaranteed due to float differences)
+      const multiCuts = multi.points.filter(p => p.type === 'cut').length;
+      const singleCuts = single.points.filter(p => p.type === 'cut').length;
+      expect(multiCuts).toBe(singleCuts);
     });
   });
 });

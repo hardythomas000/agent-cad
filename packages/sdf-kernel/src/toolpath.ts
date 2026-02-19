@@ -241,7 +241,7 @@ export function generateRasterSurfacing(
 
 function computeStats(
   points: ToolpathPoint[],
-  params: ToolpathParams,
+  params: { safe_z: number; feed_rate: number; plunge_rate?: number },
 ): Omit<ToolpathStats, 'z_min' | 'z_max'> {
   let cutDist = 0;
   let rapidDist = 0;
@@ -292,8 +292,7 @@ function computeStats(
 // 2D profile following at a fixed Z level (CNC convention).
 // Uses marching squares on an SDF cross-section, offset by tool radius.
 
-export interface ContourToolpathParams {
-  z_level: number;              // CNC Z level (maps to SDF Y)
+export interface BaseContourParams {
   direction?: 'climb' | 'conventional';  // default: 'climb'
   point_spacing?: number;       // mm along contour (default: 0.5)
   feed_rate: number;
@@ -301,6 +300,17 @@ export interface ContourToolpathParams {
   rpm: number;
   safe_z: number;
   resolution?: number;          // marching squares cell size (default: 1.0 mm)
+}
+
+export interface ContourToolpathParams extends BaseContourParams {
+  z_level: number;              // CNC Z level (maps to SDF Y)
+}
+
+export interface MultiLevelContourParams extends BaseContourParams {
+  z_top: number;                // CNC Z start (highest level)
+  z_bottom: number;             // CNC Z end (lowest level)
+  step_down: number;            // Depth per level (positive, mm)
+  leave_stock?: number;         // Radial material allowance (default: 0)
 }
 
 export interface ContourToolpathResult {
@@ -315,65 +325,35 @@ export interface ContourToolpathResult {
 }
 
 /**
- * Generate a 2D contour toolpath at a fixed Z level.
+ * Extract contour loops at a single Y level and append toolpath points.
+ * Shared by single-level and multi-level contour generation.
  *
- * The tool center path is computed via SDF offset:
- *   Round(shape, R) expands the surface outward by R.
- *   The zero-contour of this offset SDF is where the flat endmill center
- *   should travel to just touch the original surface.
- *
- * Coordinate convention:
- *   z_level is in CNC Z-up convention, maps directly to SDF Y.
- *   Marching squares grid is in SDF XZ plane at y = z_level.
- *   Points stored in SDF convention (Y-up). G-code emitter swaps Y↔Z.
+ * Returns the number of loops appended.
  */
-export function generateContourToolpath(
-  shape: SDF,
-  tool: ToolDefinition,
-  params: ContourToolpathParams,
-): Omit<ContourToolpathResult, 'id'> {
-  const R = tool.radius;
-  if (R <= 0) throw new Error('Tool radius must be positive');
-
-  const sdfY = params.z_level; // CNC Z → SDF Y
-  const safeY = params.safe_z;
-  const spacing = params.point_spacing ?? 0.5;
-  const cellSize = params.resolution ?? 1.0;
-  const climb = (params.direction ?? 'climb') === 'climb';
-
-  // Offset SDF: expand surface outward by tool radius
-  const offsetShape = new Round(shape, R);
-
-  // SDF bounds — use for marching squares grid extents
-  const sdfBounds = shape.bounds();
-  const margin = R + cellSize * 2; // Extra margin for offset expansion
-
-  const gridBounds = {
-    xMin: sdfBounds.min[0] - margin,
-    xMax: sdfBounds.max[0] + margin,
-    zMin: sdfBounds.min[2] - margin,
-    zMax: sdfBounds.max[2] + margin,
-  };
-
-  // Extract contour loops at the given Y level
+function appendContourLevel(
+  offsetShape: SDF,
+  sdfY: number,
+  safeY: number,
+  climb: boolean,
+  spacing: number,
+  cellSize: number,
+  gridBounds: { xMin: number; xMax: number; zMin: number; zMax: number },
+  points: ToolpathPoint[],
+): number {
   const loops = extractContours(
     (x, z) => offsetShape.evaluate([x, sdfY, z]),
     gridBounds,
     cellSize,
   );
 
-  // Generate toolpath points from contour loops
-  const points: ToolpathPoint[] = [];
   let loopCount = 0;
 
   for (const loop of loops) {
     if (loop.points.length < 2) continue;
 
-    // Resample loop to desired point spacing
     const resampled = resampleLoop(loop.points, loop.closed, spacing);
     if (resampled.length < 2) continue;
 
-    // Conventional milling = CCW for outside contour = reverse climb order
     const ordered = climb ? resampled : [...resampled].reverse();
 
     // Approach: rapid to safe Z, rapid to start XZ, plunge to cut Z
@@ -400,16 +380,62 @@ export function generateContourToolpath(
     loopCount++;
   }
 
-  // Compute statistics using a dummy ToolpathParams for the stat helper
-  const statParams: ToolpathParams = {
-    direction: 'x',
-    stepover_pct: 100,
-    feed_rate: params.feed_rate,
-    plunge_rate: params.plunge_rate,
-    rpm: params.rpm,
-    safe_z: params.safe_z,
+  return loopCount;
+}
+
+/**
+ * Compute grid bounds for contour extraction with margin.
+ */
+function contourGridBounds(
+  shape: SDF,
+  margin: number,
+): { xMin: number; xMax: number; zMin: number; zMax: number } {
+  const sdfBounds = shape.bounds();
+  return {
+    xMin: sdfBounds.min[0] - margin,
+    xMax: sdfBounds.max[0] + margin,
+    zMin: sdfBounds.min[2] - margin,
+    zMax: sdfBounds.max[2] + margin,
   };
-  const stats = computeStats(points, statParams);
+}
+
+/**
+ * Generate a 2D contour toolpath at a fixed Z level.
+ *
+ * The tool center path is computed via SDF offset:
+ *   Round(shape, R) expands the surface outward by R.
+ *   The zero-contour of this offset SDF is where the flat endmill center
+ *   should travel to just touch the original surface.
+ *
+ * Coordinate convention:
+ *   z_level is in CNC Z-up convention, maps directly to SDF Y.
+ *   Marching squares grid is in SDF XZ plane at y = z_level.
+ *   Points stored in SDF convention (Y-up). G-code emitter swaps Y↔Z.
+ */
+export function generateContourToolpath(
+  shape: SDF,
+  tool: ToolDefinition,
+  params: ContourToolpathParams,
+): Omit<ContourToolpathResult, 'id'> {
+  const R = tool.radius;
+  if (R <= 0) throw new Error('Tool radius must be positive');
+
+  const sdfY = params.z_level;
+  const safeY = params.safe_z;
+  const spacing = params.point_spacing ?? 0.5;
+  const cellSize = params.resolution ?? 1.0;
+  const climb = (params.direction ?? 'climb') === 'climb';
+
+  const offsetShape = new Round(shape, R);
+  const margin = R + cellSize * 2;
+  const gridBounds = contourGridBounds(shape, margin);
+
+  const points: ToolpathPoint[] = [];
+  const loopCount = appendContourLevel(
+    offsetShape, sdfY, safeY, climb, spacing, cellSize, gridBounds, points,
+  );
+
+  const stats = computeStats(points, params);
 
   return {
     tool,
@@ -423,6 +449,88 @@ export function generateContourToolpath(
     },
     stats: { ...stats, z_min: sdfY, z_max: sdfY },
     loop_count: loopCount,
+  };
+}
+
+/**
+ * Generate multi-level contour toolpath (Z-level waterline roughing).
+ *
+ * Loops from z_top down to z_bottom in step_down increments.
+ * Each level extracts contours via marching squares on the SDF cross-section,
+ * offset by tool radius + leave_stock.
+ *
+ * All points go into one unified ToolpathPoint[] array with retract-rapids
+ * between levels. The existing G-code emitter and viewer renderer work directly.
+ */
+export function generateMultiLevelContour(
+  shape: SDF,
+  tool: ToolDefinition,
+  params: MultiLevelContourParams,
+): Omit<ContourToolpathResult, 'id'> {
+  const R = tool.radius;
+  if (R <= 0) throw new Error('Tool radius must be positive');
+  if (params.step_down <= 0) throw new Error('step_down must be positive');
+  if (params.z_top < params.z_bottom) {
+    throw new Error(
+      `z_top (${params.z_top}) must be >= z_bottom (${params.z_bottom}). ` +
+      `z_top is the starting height, z_bottom is the final depth.`
+    );
+  }
+  if (params.safe_z <= params.z_top) {
+    throw new Error(
+      `safe_z (${params.safe_z}) must be > z_top (${params.z_top}) for safe retract.`
+    );
+  }
+
+  const leaveStock = params.leave_stock ?? 0;
+  const rEffective = R + leaveStock;
+  const spacing = params.point_spacing ?? 0.5;
+  const cellSize = params.resolution ?? 1.0;
+  const climb = (params.direction ?? 'climb') === 'climb';
+  const safeY = params.safe_z;
+
+  // Offset SDF by effective tool radius (tool radius + leave stock)
+  const offsetShape = new Round(shape, rEffective);
+  const margin = rEffective + cellSize * 2;
+  const gridBounds = contourGridBounds(shape, margin);
+
+  const points: ToolpathPoint[] = [];
+  let totalLoops = 0;
+
+  // Walk from z_top down to z_bottom in step_down increments
+  for (let z = params.z_top; z >= params.z_bottom - 1e-9; z -= params.step_down) {
+    // Clamp to z_bottom to avoid floating point overshoot
+    const sdfY = Math.max(z, params.z_bottom);
+
+    const loops = appendContourLevel(
+      offsetShape, sdfY, safeY, climb, spacing, cellSize, gridBounds, points,
+    );
+    totalLoops += loops;
+
+    // If we've reached z_bottom, stop
+    if (sdfY <= params.z_bottom + 1e-9) break;
+  }
+
+  const stats = computeStats(points, params);
+
+  // Compute Y bounds from cut points
+  const cutPoints = points.filter(p => p.type === 'cut' || p.type === 'plunge');
+  const yValues = cutPoints.map(p => p.y);
+  const yMin = yValues.length > 0 ? Math.min(...yValues) : params.z_bottom;
+  const yMax = yValues.length > 0 ? Math.max(...yValues) : params.z_top;
+
+  return {
+    tool,
+    params: { ...params, z_level: params.z_top } as any as ContourToolpathParams,
+    shape_name: shape.name,
+    points,
+    bounds: {
+      x: [gridBounds.xMin, gridBounds.xMax],
+      y: [yMin, yMax],
+      z: [gridBounds.zMin, gridBounds.zMax],
+    },
+    stats: { ...stats, z_min: yMin, z_max: yMax },
+    loop_count: totalLoops,
   };
 }
 
