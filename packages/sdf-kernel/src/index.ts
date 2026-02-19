@@ -30,7 +30,12 @@ export { exportSTL } from './stl.js';
 
 // Toolpath generation
 export type { ToolDefinition, ToolpathPoint, ToolpathParams, ToolpathResult, ToolpathStats } from './toolpath.js';
-export { generateRasterSurfacing } from './toolpath.js';
+export type { ContourToolpathParams, ContourToolpathResult } from './toolpath.js';
+export { generateRasterSurfacing, generateContourToolpath } from './toolpath.js';
+
+// Marching squares (2D contour extraction)
+export type { ContourLoop } from './marching-squares.js';
+export { extractContours } from './marching-squares.js';
 
 // G-code emission
 export type { GCodeConfig } from './gcode.js';

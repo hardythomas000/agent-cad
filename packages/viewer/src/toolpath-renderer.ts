@@ -10,7 +10,7 @@
  */
 
 import * as THREE from 'three';
-import type { ToolpathResult } from '@agent-cad/sdf-kernel';
+import type { ToolpathPoint } from '@agent-cad/sdf-kernel';
 
 const RAPID_COLOR  = new THREE.Color(0xc9a84c);
 const CUT_COLOR    = new THREE.Color(0x4a9e8e);
@@ -28,7 +28,7 @@ function colorForType(type: 'rapid' | 'cut' | 'plunge'): THREE.Color {
  * Convert a ToolpathResult into a single THREE.LineSegments with vertex colors.
  * Returns null if the toolpath has fewer than 2 points.
  */
-export function renderToolpath(toolpath: ToolpathResult): THREE.LineSegments | null {
+export function renderToolpath(toolpath: { points: ToolpathPoint[] }): THREE.LineSegments | null {
   const pts = toolpath.points;
   if (pts.length < 2) return null;
 

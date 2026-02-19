@@ -23,12 +23,13 @@
 
 import { SDF, Round } from './sdf.js';
 import type { Vec3, BoundingBox } from './vec3.js';
+import { extractContours } from './marching-squares.js';
 
 // ─── Types ──────────────────────────────────────────────────────
 
 export interface ToolDefinition {
   name: string;
-  type: 'ballnose';
+  type: 'ballnose' | 'flat';
   diameter: number;
   radius: number;
   flute_length?: number;
@@ -108,6 +109,12 @@ export function generateRasterSurfacing(
   tool: ToolDefinition,
   params: ToolpathParams,
 ): Omit<ToolpathResult, 'id'> {
+  if (tool.type !== 'ballnose') {
+    throw new Error(
+      `generateRasterSurfacing() requires a ballnose tool, got '${tool.type}'. ` +
+      `Use generateContourToolpath() for flat endmill profiling.`
+    );
+  }
   const R = tool.radius;
   if (R <= 0) throw new Error('Tool radius must be positive');
 
@@ -278,4 +285,197 @@ function computeStats(
     rapid_distance_mm: Math.round(rapidDist * 100) / 100,
     estimated_time_min: Math.round(estimatedTime * 100) / 100,
   };
+}
+
+// ─── Contour Toolpath ───────────────────────────────────────────
+//
+// 2D profile following at a fixed Z level (CNC convention).
+// Uses marching squares on an SDF cross-section, offset by tool radius.
+
+export interface ContourToolpathParams {
+  z_level: number;              // CNC Z level (maps to SDF Y)
+  direction?: 'climb' | 'conventional';  // default: 'climb'
+  point_spacing?: number;       // mm along contour (default: 0.5)
+  feed_rate: number;
+  plunge_rate?: number;
+  rpm: number;
+  safe_z: number;
+  resolution?: number;          // marching squares cell size (default: 1.0 mm)
+}
+
+export interface ContourToolpathResult {
+  id: string;
+  tool: ToolDefinition;
+  params: ContourToolpathParams;
+  shape_name: string;
+  points: ToolpathPoint[];
+  bounds: { x: [number, number]; y: [number, number]; z: [number, number] };
+  stats: ToolpathStats;
+  loop_count: number;
+}
+
+/**
+ * Generate a 2D contour toolpath at a fixed Z level.
+ *
+ * The tool center path is computed via SDF offset:
+ *   Round(shape, R) expands the surface outward by R.
+ *   The zero-contour of this offset SDF is where the flat endmill center
+ *   should travel to just touch the original surface.
+ *
+ * Coordinate convention:
+ *   z_level is in CNC Z-up convention, maps directly to SDF Y.
+ *   Marching squares grid is in SDF XZ plane at y = z_level.
+ *   Points stored in SDF convention (Y-up). G-code emitter swaps Y↔Z.
+ */
+export function generateContourToolpath(
+  shape: SDF,
+  tool: ToolDefinition,
+  params: ContourToolpathParams,
+): Omit<ContourToolpathResult, 'id'> {
+  const R = tool.radius;
+  if (R <= 0) throw new Error('Tool radius must be positive');
+
+  const sdfY = params.z_level; // CNC Z → SDF Y
+  const safeY = params.safe_z;
+  const spacing = params.point_spacing ?? 0.5;
+  const cellSize = params.resolution ?? 1.0;
+  const climb = (params.direction ?? 'climb') === 'climb';
+
+  // Offset SDF: expand surface outward by tool radius
+  const offsetShape = new Round(shape, R);
+
+  // SDF bounds — use for marching squares grid extents
+  const sdfBounds = shape.bounds();
+  const margin = R + cellSize * 2; // Extra margin for offset expansion
+
+  const gridBounds = {
+    xMin: sdfBounds.min[0] - margin,
+    xMax: sdfBounds.max[0] + margin,
+    zMin: sdfBounds.min[2] - margin,
+    zMax: sdfBounds.max[2] + margin,
+  };
+
+  // Extract contour loops at the given Y level
+  const loops = extractContours(
+    (x, z) => offsetShape.evaluate([x, sdfY, z]),
+    gridBounds,
+    cellSize,
+  );
+
+  // Generate toolpath points from contour loops
+  const points: ToolpathPoint[] = [];
+  let loopCount = 0;
+
+  for (const loop of loops) {
+    if (loop.points.length < 2) continue;
+
+    // Resample loop to desired point spacing
+    const resampled = resampleLoop(loop.points, loop.closed, spacing);
+    if (resampled.length < 2) continue;
+
+    // Conventional milling = CCW for outside contour = reverse climb order
+    const ordered = climb ? resampled : [...resampled].reverse();
+
+    // Approach: rapid to safe Z, rapid to start XZ, plunge to cut Z
+    const [sx, sz] = ordered[0];
+    points.push({ x: sx, y: safeY, z: sz, type: 'rapid' });
+    points.push({ x: sx, y: sdfY, z: sz, type: 'plunge' });
+
+    // Walk the contour
+    for (let i = 1; i < ordered.length; i++) {
+      const [cx, cz] = ordered[i];
+      points.push({ x: cx, y: sdfY, z: cz, type: 'cut' });
+    }
+
+    // Close the loop if it's closed (return to start)
+    if (loop.closed && ordered.length > 2) {
+      const [fx, fz] = ordered[0];
+      points.push({ x: fx, y: sdfY, z: fz, type: 'cut' });
+    }
+
+    // Retract to safe Z
+    const lastPt = points[points.length - 1];
+    points.push({ x: lastPt.x, y: safeY, z: lastPt.z, type: 'rapid' });
+
+    loopCount++;
+  }
+
+  // Compute statistics using a dummy ToolpathParams for the stat helper
+  const statParams: ToolpathParams = {
+    direction: 'x',
+    stepover_pct: 100,
+    feed_rate: params.feed_rate,
+    plunge_rate: params.plunge_rate,
+    rpm: params.rpm,
+    safe_z: params.safe_z,
+  };
+  const stats = computeStats(points, statParams);
+
+  return {
+    tool,
+    params,
+    shape_name: shape.name,
+    points,
+    bounds: {
+      x: [gridBounds.xMin, gridBounds.xMax],
+      y: [sdfY, sdfY],
+      z: [gridBounds.zMin, gridBounds.zMax],
+    },
+    stats: { ...stats, z_min: sdfY, z_max: sdfY },
+    loop_count: loopCount,
+  };
+}
+
+// ─── Resample Polyline ──────────────────────────────────────────
+
+/** Resample a polyline to evenly-spaced points along the path. */
+function resampleLoop(
+  pts: [number, number][],
+  closed: boolean,
+  spacing: number,
+): [number, number][] {
+  if (pts.length < 2) return pts;
+
+  // Build cumulative arc lengths
+  const cumLen: number[] = [0];
+  for (let i = 1; i < pts.length; i++) {
+    const dx = pts[i][0] - pts[i - 1][0];
+    const dz = pts[i][1] - pts[i - 1][1];
+    cumLen.push(cumLen[i - 1] + Math.sqrt(dx * dx + dz * dz));
+  }
+
+  // If closed, add the closing segment
+  if (closed) {
+    const dx = pts[0][0] - pts[pts.length - 1][0];
+    const dz = pts[0][1] - pts[pts.length - 1][1];
+    cumLen.push(cumLen[cumLen.length - 1] + Math.sqrt(dx * dx + dz * dz));
+  }
+
+  const totalLen = cumLen[cumLen.length - 1];
+  if (totalLen < spacing) return pts;
+
+  const numPts = Math.max(2, Math.round(totalLen / spacing));
+  const result: [number, number][] = [];
+
+  // Build extended points array (include closing segment for closed loops)
+  const extended = closed ? [...pts, pts[0]] : pts;
+
+  let segIdx = 0;
+  for (let i = 0; i < numPts; i++) {
+    const target = (i / numPts) * totalLen;
+
+    // Advance to the correct segment
+    while (segIdx < cumLen.length - 2 && cumLen[segIdx + 1] < target) {
+      segIdx++;
+    }
+
+    const segLen = cumLen[segIdx + 1] - cumLen[segIdx];
+    const t = segLen > 1e-12 ? (target - cumLen[segIdx]) / segLen : 0;
+
+    const x = extended[segIdx][0] + t * (extended[segIdx + 1][0] - extended[segIdx][0]);
+    const z = extended[segIdx][1] + t * (extended[segIdx + 1][1] - extended[segIdx][1]);
+    result.push([x, z]);
+  }
+
+  return result;
 }

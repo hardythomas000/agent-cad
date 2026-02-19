@@ -1,5 +1,5 @@
 /**
- * MCP Tool Registrations — 42 tools wrapping the SDF kernel.
+ * MCP Tool Registrations — 43 tools wrapping the SDF kernel.
  *
  * Every tool returns JSON with { shape_id, type, readback } so the LLM
  * always knows the current state after every operation.
@@ -11,7 +11,7 @@ import {
   box, sphere, cylinder, cone, torus, plane,
   polygon, circle2d, rect2d, extrude, revolve,
   marchingCubes, exportSTL,
-  generateRasterSurfacing, emitFanucGCode,
+  generateRasterSurfacing, generateContourToolpath, emitFanucGCode,
   hole, pocket, boltCircle, chamfer, fillet,
   type SDF, type TriangleMesh,
   type ToolDefinition,
@@ -544,9 +544,9 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     'define_tool',
-    'Define a cutting tool for CAM toolpath generation. Currently supports ball nose end mills.',
+    'Define a cutting tool for CAM toolpath generation. Supports ball nose end mills and flat end mills.',
     {
-      type: z.enum(['ballnose']).describe('Tool type'),
+      type: z.enum(['ballnose', 'flat']).describe('Tool type'),
       diameter: z.number().positive().describe('Tool diameter in mm'),
       flute_length: z.number().positive().optional().describe('Flute length in mm'),
       shank_diameter: z.number().positive().optional().describe('Shank diameter in mm'),
@@ -614,8 +614,56 @@ export function registerTools(server: McpServer): void {
   );
 
   server.tool(
+    'generate_contour_toolpath',
+    'Generate a 2D contour/profile toolpath at a fixed Z level. Uses marching squares on SDF cross-section, offset by tool radius. Outside profiling only — tool center follows the offset contour.',
+    {
+      shape: z.string().describe('ID of shape to machine'),
+      tool: z.string().describe('ID of cutting tool to use'),
+      z_level: z.number().describe('Z level for the contour cut (CNC Z-up convention, in mm)'),
+      direction: z.enum(['climb', 'conventional']).default('climb')
+        .describe('Milling direction: climb (default) or conventional'),
+      point_spacing: z.number().positive().optional()
+        .describe('Point spacing along contour in mm (default: 0.5)'),
+      feed_rate: z.number().positive().describe('Cutting feed rate in mm/min'),
+      plunge_rate: z.number().positive().optional()
+        .describe('Plunge feed rate in mm/min (default: feed_rate / 3)'),
+      rpm: z.number().positive().describe('Spindle speed RPM'),
+      safe_z: z.number().describe('Safe retract height in mm'),
+      resolution: z.number().positive().optional()
+        .describe('Marching squares cell size in mm (default: 1.0). Smaller = finer contour.'),
+      name: z.string().optional().describe('Toolpath name/ID'),
+    },
+    async (params) => {
+      const shapeEntry = registry.get(params.shape);
+      const tool = registry.getTool(params.tool);
+      const start = Date.now();
+      const result = generateContourToolpath(shapeEntry.shape, tool, {
+        z_level: params.z_level,
+        direction: params.direction,
+        point_spacing: params.point_spacing,
+        feed_rate: params.feed_rate,
+        plunge_rate: params.plunge_rate,
+        rpm: params.rpm,
+        safe_z: params.safe_z,
+        resolution: params.resolution,
+      });
+      const elapsed = Date.now() - start;
+      const summary = registry.createContourToolpath(
+        { ...result, id: '' },
+        params.name,
+      );
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ...summary, computed_in_ms: elapsed }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
     'export_gcode',
-    'Export a toolpath as Fanuc-compatible G-code (.nc file). Must call generate_surfacing_toolpath first.',
+    'Export a toolpath as Fanuc-compatible G-code (.nc file). Must call generate_surfacing_toolpath or generate_contour_toolpath first.',
     {
       toolpath: z.string().describe('ID of toolpath to export'),
       program_number: z.number().int().min(1).max(9999).optional()

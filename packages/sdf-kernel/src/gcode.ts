@@ -16,7 +16,10 @@
  *     G-code Z = point.y   (SDF Y = CNC Z / spindle axis)
  */
 
-import type { ToolpathResult, ToolpathPoint } from './toolpath.js';
+import type { ToolpathResult, ContourToolpathResult, ToolpathPoint } from './toolpath.js';
+
+/** Union type for any toolpath that the G-code emitter accepts. */
+type AnyToolpathResult = ToolpathResult | ContourToolpathResult;
 
 // ─── Config ─────────────────────────────────────────────────────
 
@@ -33,7 +36,7 @@ export interface GCodeConfig {
 // ─── Emitter ────────────────────────────────────────────────────
 
 export function emitFanucGCode(
-  toolpath: ToolpathResult,
+  toolpath: AnyToolpathResult,
   config?: GCodeConfig,
 ): string {
   const cfg = {
@@ -75,13 +78,18 @@ export function emitFanucGCode(
   lines.push('%');
 
   const toolDesc = `${toolpath.tool.name} D${toolpath.tool.diameter} ${toolpath.tool.type.toUpperCase()}`;
-  emit(`O${String(cfg.program_number).padStart(4, '0')} ${comment('BALL NOSE SURFACING')}`);
+  const opName = toolpath.tool.type === 'flat' ? 'CONTOUR PROFILING' : 'BALL NOSE SURFACING';
+  emit(`O${String(cfg.program_number).padStart(4, '0')} ${comment(opName)}`);
   emit(comment(`TOOL: ${toolDesc}`));
   emit(comment(`SHAPE: ${toolpath.shape_name}`));
   emit(comment(`GENERATED: ${new Date().toISOString().split('T')[0]} BY AGENT-CAD`));
 
-  const stepoverMm = toolpath.tool.diameter * (toolpath.params.stepover_pct / 100);
-  emit(comment(`STEPOVER: ${fmt(stepoverMm)}MM  FEED: ${toolpath.params.feed_rate}MM/MIN  RPM: ${toolpath.params.rpm}`));
+  if ('stepover_pct' in toolpath.params && toolpath.params.stepover_pct) {
+    const stepoverMm = toolpath.tool.diameter * (toolpath.params.stepover_pct / 100);
+    emit(comment(`STEPOVER: ${fmt(stepoverMm)}MM  FEED: ${toolpath.params.feed_rate}MM/MIN  RPM: ${toolpath.params.rpm}`));
+  } else {
+    emit(comment(`FEED: ${toolpath.params.feed_rate}MM/MIN  RPM: ${toolpath.params.rpm}`));
+  }
 
   emit(`G90 G21 G17 ${comment('ABSOLUTE, METRIC, XY PLANE')}`);
   emit(`G00 ${cfg.work_offset} X0. Y0. Z${fmt(toolpath.params.safe_z)} ${comment('RAPID TO SAFE Z')}`);
