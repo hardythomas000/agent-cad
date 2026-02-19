@@ -15,7 +15,6 @@ import {
   hole, pocket, boltCircle,
   type SDF, type TriangleMesh,
   type ToolDefinition,
-  type Vec3,
 } from '@agent-cad/sdf-kernel';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -743,7 +742,7 @@ export function registerTools(server: McpServer): void {
       diameter: z.number().positive().describe('Hole diameter in mm'),
       depth: z.union([z.number().positive(), z.literal('through')])
         .describe('Hole depth in mm, or "through" for full penetration'),
-      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+      at: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).optional()
         .describe('3D offset from face center [x,y,z]. Normal component is dropped (projected onto face plane).'),
       feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
         .describe('Feature name for topology (default: auto "hole_N")'),
@@ -754,7 +753,7 @@ export function registerTools(server: McpServer): void {
       const result_shape = hole(s, face_name, {
         diameter,
         depth,
-        at: at as Vec3 | undefined,
+        at,
         featureName: feature_name,
       });
       const result = registry.create(result_shape, 'hole', name);
@@ -771,7 +770,7 @@ export function registerTools(server: McpServer): void {
       width: z.number().positive().describe('Pocket width (along face U axis) in mm'),
       length: z.number().positive().describe('Pocket length (along face V axis) in mm'),
       depth: z.number().positive().describe('Pocket depth in mm'),
-      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+      at: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).optional()
         .describe('3D offset from face center [x,y,z]. Normal component is dropped (projected onto face plane).'),
       feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
         .describe('Feature name for topology (default: auto "pocket_N")'),
@@ -783,7 +782,7 @@ export function registerTools(server: McpServer): void {
         width,
         length,
         depth,
-        at: at as Vec3 | undefined,
+        at,
         featureName: feature_name,
       });
       const result = registry.create(result_shape, 'pocket', name);
@@ -797,13 +796,13 @@ export function registerTools(server: McpServer): void {
     {
       shape: z.string().describe('ID of shape to cut the bolt circle in'),
       face_name: z.string().describe('Name of the planar face (e.g. "top", "front", "right")'),
-      count: z.number().int().min(1).describe('Number of holes'),
+      count: z.number().int().min(1).max(256).describe('Number of holes (max 256)'),
       bolt_circle_diameter: z.number().positive().describe('Bolt circle diameter (center-to-center) in mm'),
       hole_diameter: z.number().positive().describe('Individual hole diameter in mm'),
       depth: z.union([z.number().positive(), z.literal('through')])
         .describe('Hole depth in mm, or "through" for full penetration'),
       start_angle: z.number().default(0).describe('Start angle in degrees (default 0 = first hole on face U axis)'),
-      at: z.tuple([z.number(), z.number(), z.number()]).optional()
+      at: z.tuple([z.number().finite(), z.number().finite(), z.number().finite()]).optional()
         .describe('3D offset for bolt circle center [x,y,z]. Normal component is dropped.'),
       feature_name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]*$/).max(64).optional()
         .describe('Feature name prefix for individual holes (e.g. "mount" → mount_1, mount_2, ...)'),
@@ -817,7 +816,7 @@ export function registerTools(server: McpServer): void {
         holeDiameter: hole_diameter,
         depth,
         startAngle: start_angle,
-        at: at as Vec3 | undefined,
+        at,
         featureName: feature_name,
       });
       const result = registry.create(result_shape, 'bolt_circle', name);
