@@ -40,6 +40,10 @@ export { emitFanucGCode } from './gcode.js';
 export { hole } from './features.js';
 export type { HoleOptions } from './features.js';
 
+// Tool library
+export { findTool, listTools, listLibraries } from './tool-library.js';
+export type { LibraryTool } from './tool-library.js';
+
 // Node classes (for advanced use / type checking)
 export {
   Sphere, Box, Cylinder, Cone, Torus, Plane,
