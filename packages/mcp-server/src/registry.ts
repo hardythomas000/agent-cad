@@ -5,7 +5,7 @@
  * a structured readback so the LLM always knows the current state.
  */
 
-import type { SDF, SDFReadback, TriangleMesh, ToolDefinition, ToolpathResult, ContourToolpathResult } from '@agent-cad/sdf-kernel';
+import type { SDF, SDFReadback, TriangleMesh, ToolDefinition, ToolpathResult, ContourToolpathResult, MultiLevelContourResult, DrillCycleResult } from '@agent-cad/sdf-kernel';
 import type { SDF2D, BoundingBox2D } from '@agent-cad/sdf-kernel';
 
 export interface ShapeEntry {
@@ -257,60 +257,51 @@ export interface ToolpathSummary {
   };
 }
 
-type AnyToolpathResult = ToolpathResult | ContourToolpathResult;
+type AnyToolpathResult = ToolpathResult | ContourToolpathResult | MultiLevelContourResult | DrillCycleResult;
 
 let nextToolpathId = 1;
 const toolpaths = new Map<string, AnyToolpathResult>();
 
-export function createToolpath(toolpath: ToolpathResult, name?: string): ToolpathSummary {
-  if (name !== undefined && !/^[a-zA-Z0-9_-]+$/.test(name)) {
-    throw new Error(`Invalid toolpath name "${name}". Use only letters, digits, hyphens, underscores.`);
+/** Derive a human-readable name and stepover from any toolpath kind. */
+function toolpathMeta(tp: AnyToolpathResult): { name: string; stepover_mm: number } {
+  switch (tp.kind) {
+    case 'surfacing': {
+      const stepoverMm = tp.tool.diameter * (tp.params.stepover_pct / 100);
+      return { name: `raster_${tp.params.direction}_${tp.tool.name}`, stepover_mm: Math.round(stepoverMm * 1000) / 1000 };
+    }
+    case 'contour':
+      return { name: `contour_z${tp.params.z_level}_${tp.tool.name}`, stepover_mm: 0 };
+    case 'multilevel_contour':
+      return { name: `mlcontour_${tp.tool.name}`, stepover_mm: 0 };
+    case 'drill':
+      return { name: `drill_${tp.holes.length}x_${tp.tool.name}`, stepover_mm: 0 };
   }
-  const id = name ?? `tp_${nextToolpathId++}`;
-  const stored = { ...toolpath, id };
-  toolpaths.set(id, stored);
-
-  const stepoverMm = toolpath.tool.diameter * (toolpath.params.stepover_pct / 100);
-  return {
-    toolpath_id: id,
-    type: 'surfacing',
-    readback: {
-      name: `raster_${toolpath.params.direction}_${toolpath.tool.name}`,
-      shape: toolpath.shape_name,
-      tool: `${toolpath.tool.name} ${toolpath.tool.type} D${toolpath.tool.diameter}`,
-      point_count: toolpath.stats.point_count,
-      pass_count: toolpath.stats.pass_count,
-      z_range: [toolpath.stats.z_min, toolpath.stats.z_max],
-      cut_distance_mm: toolpath.stats.cut_distance_mm,
-      rapid_distance_mm: toolpath.stats.rapid_distance_mm,
-      estimated_time_min: toolpath.stats.estimated_time_min,
-      stepover_mm: Math.round(stepoverMm * 1000) / 1000,
-    },
-  };
 }
 
-export function createContourToolpath(toolpath: ContourToolpathResult, name?: string): ToolpathSummary {
+/** Store any toolpath type and return its ID + readback summary. */
+export function createToolpath(toolpath: Omit<AnyToolpathResult, 'id'>, name?: string): ToolpathSummary {
   if (name !== undefined && !/^[a-zA-Z0-9_-]+$/.test(name)) {
     throw new Error(`Invalid toolpath name "${name}". Use only letters, digits, hyphens, underscores.`);
   }
   const id = name ?? `tp_${nextToolpathId++}`;
-  const stored = { ...toolpath, id };
+  const stored = { ...toolpath, id } as AnyToolpathResult;
   toolpaths.set(id, stored);
 
+  const meta = toolpathMeta(stored);
   return {
     toolpath_id: id,
-    type: 'contour',
+    type: stored.kind,
     readback: {
-      name: `contour_z${toolpath.params.z_level}_${toolpath.tool.name}`,
-      shape: toolpath.shape_name,
-      tool: `${toolpath.tool.name} ${toolpath.tool.type} D${toolpath.tool.diameter}`,
-      point_count: toolpath.stats.point_count,
-      pass_count: toolpath.stats.pass_count,
-      z_range: [toolpath.stats.z_min, toolpath.stats.z_max],
-      cut_distance_mm: toolpath.stats.cut_distance_mm,
-      rapid_distance_mm: toolpath.stats.rapid_distance_mm,
-      estimated_time_min: toolpath.stats.estimated_time_min,
-      stepover_mm: 0, // contour has no stepover
+      name: meta.name,
+      shape: stored.shape_name,
+      tool: `${stored.tool.name} ${stored.tool.type} D${stored.tool.diameter}`,
+      point_count: stored.stats.point_count,
+      pass_count: stored.stats.pass_count,
+      z_range: [stored.stats.z_min, stored.stats.z_max],
+      cut_distance_mm: stored.stats.cut_distance_mm,
+      rapid_distance_mm: stored.stats.rapid_distance_mm,
+      estimated_time_min: stored.stats.estimated_time_min,
+      stepover_mm: meta.stepover_mm,
     },
   };
 }
@@ -326,16 +317,12 @@ export function getToolpath(id: string): AnyToolpathResult {
 
 export function listToolpaths(): ToolpathSummary[] {
   return [...toolpaths.values()].map((tp) => {
-    const isContour = 'loop_count' in tp;
-    const stepoverMm = isContour ? 0 : (tp as ToolpathResult).tool.diameter * ((tp as ToolpathResult).params.stepover_pct / 100);
-    const tpName = isContour
-      ? `contour_z${(tp as ContourToolpathResult).params.z_level}_${tp.tool.name}`
-      : `raster_${(tp as ToolpathResult).params.direction}_${tp.tool.name}`;
+    const meta = toolpathMeta(tp);
     return {
       toolpath_id: tp.id,
-      type: isContour ? 'contour' : 'surfacing',
+      type: tp.kind,
       readback: {
-        name: tpName,
+        name: meta.name,
         shape: tp.shape_name,
         tool: `${tp.tool.name} ${tp.tool.type} D${tp.tool.diameter}`,
         point_count: tp.stats.point_count,
@@ -344,7 +331,7 @@ export function listToolpaths(): ToolpathSummary[] {
         cut_distance_mm: tp.stats.cut_distance_mm,
         rapid_distance_mm: tp.stats.rapid_distance_mm,
         estimated_time_min: tp.stats.estimated_time_min,
-        stepover_mm: Math.round(stepoverMm * 1000) / 1000,
+        stepover_mm: meta.stepover_mm,
       },
     };
   });

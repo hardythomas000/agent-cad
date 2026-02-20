@@ -29,7 +29,7 @@ import { extractContours } from './marching-squares.js';
 
 export interface ToolDefinition {
   name: string;
-  type: 'ballnose' | 'flat';
+  type: 'ballnose' | 'flat' | 'drill';
   diameter: number;
   radius: number;
   flute_length?: number;
@@ -69,6 +69,7 @@ export interface ToolpathStats {
 }
 
 export interface ToolpathResult {
+  kind: 'surfacing';
   id: string;
   tool: ToolDefinition;
   params: ToolpathParams;
@@ -224,6 +225,7 @@ export function generateRasterSurfacing(
   const yMax = yValues.length > 0 ? Math.max(...yValues) : 0;
 
   return {
+    kind: 'surfacing' as const,
     tool,
     params,
     shape_name: shape.name,
@@ -256,19 +258,15 @@ function computeStats(
     const dz = curr.z - prev.z;
     const dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
-    if (curr.type === 'cut') {
+    if (curr.type === 'cut' || curr.type === 'plunge') {
       cutDist += dist;
-    } else if (curr.type === 'plunge') {
-      cutDist += dist; // plunge is a cutting move at plunge rate
     } else {
       rapidDist += dist;
     }
-  }
 
-  // Count passes (retract to safe height after cutting = end of pass)
-  for (let i = 1; i < points.length; i++) {
-    if (points[i].type === 'rapid' && points[i].y === params.safe_z &&
-        i > 0 && (points[i - 1].type === 'cut' || points[i - 1].type === 'plunge')) {
+    // Count passes (retract to safe height after cutting = end of pass)
+    if (curr.type === 'rapid' && curr.y === params.safe_z &&
+        (prev.type === 'cut' || prev.type === 'plunge')) {
       passCount++;
     }
   }
@@ -314,9 +312,22 @@ export interface MultiLevelContourParams extends BaseContourParams {
 }
 
 export interface ContourToolpathResult {
+  kind: 'contour';
   id: string;
   tool: ToolDefinition;
   params: ContourToolpathParams;
+  shape_name: string;
+  points: ToolpathPoint[];
+  bounds: { x: [number, number]; y: [number, number]; z: [number, number] };
+  stats: ToolpathStats;
+  loop_count: number;
+}
+
+export interface MultiLevelContourResult {
+  kind: 'multilevel_contour';
+  id: string;
+  tool: ToolDefinition;
+  params: MultiLevelContourParams;
   shape_name: string;
   points: ToolpathPoint[];
   bounds: { x: [number, number]; y: [number, number]; z: [number, number] };
@@ -438,6 +449,7 @@ export function generateContourToolpath(
   const stats = computeStats(points, params);
 
   return {
+    kind: 'contour' as const,
     tool,
     params,
     shape_name: shape.name,
@@ -466,7 +478,7 @@ export function generateMultiLevelContour(
   shape: SDF,
   tool: ToolDefinition,
   params: MultiLevelContourParams,
-): Omit<ContourToolpathResult, 'id'> {
+): Omit<MultiLevelContourResult, 'id'> {
   const R = tool.radius;
   if (R <= 0) throw new Error('Tool radius must be positive');
   if (params.step_down <= 0) throw new Error('step_down must be positive');
@@ -513,15 +525,21 @@ export function generateMultiLevelContour(
 
   const stats = computeStats(points, params);
 
-  // Compute Y bounds from cut points
-  const cutPoints = points.filter(p => p.type === 'cut' || p.type === 'plunge');
-  const yValues = cutPoints.map(p => p.y);
-  const yMin = yValues.length > 0 ? Math.min(...yValues) : params.z_bottom;
-  const yMax = yValues.length > 0 ? Math.max(...yValues) : params.z_top;
+  // Compute Y bounds from cut points (single pass, no spread)
+  let yMin = Infinity;
+  let yMax = -Infinity;
+  for (const p of points) {
+    if (p.type === 'cut' || p.type === 'plunge') {
+      if (p.y < yMin) yMin = p.y;
+      if (p.y > yMax) yMax = p.y;
+    }
+  }
+  if (yMin === Infinity) { yMin = params.z_bottom; yMax = params.z_top; }
 
   return {
+    kind: 'multilevel_contour' as const,
     tool,
-    params: { ...params, z_level: params.z_top } as any as ContourToolpathParams,
+    params,
     shape_name: shape.name,
     points,
     bounds: {
@@ -586,4 +604,221 @@ function resampleLoop(
   }
 
   return result;
+}
+
+// ─── Drill Cycles ───────────────────────────────────────────────
+//
+// Extract drillable holes from named topology and generate canned
+// cycle toolpaths (G81 standard, G83 peck drill).
+
+const HOLE_BARREL_RE = /^(hole_\d+)\.barrel$/;
+
+export interface DrillHole {
+  position: Vec3;
+  diameter: number;
+  depth: number;
+  through: boolean;
+  featureName: string;
+}
+
+export interface DrillCycleParams {
+  cycle: 'standard' | 'peck';
+  peck_depth?: number;
+  r_clearance?: number;       // mm above hole top for R-plane (default: 2)
+  feed_rate: number;
+  rpm: number;
+  safe_z: number;
+}
+
+export interface DrillCycleResult {
+  kind: 'drill';
+  id: string;
+  holes: DrillHole[];
+  tool: ToolDefinition;
+  params: DrillCycleParams;
+  shape_name: string;
+  points: ToolpathPoint[];
+  bounds: { x: [number, number]; y: [number, number]; z: [number, number] };
+  stats: ToolpathStats;
+}
+
+/**
+ * Extract drillable holes from a shape's named topology.
+ *
+ * Walks face descriptors looking for `hole_N.barrel` cylindrical faces.
+ * Returns position (SDF Y-up), diameter, depth, and through/blind flag.
+ */
+export function extractDrillHoles(shape: SDF): DrillHole[] {
+  const faces = shape.faces();
+  const bounds = shape.bounds();
+  const holes: DrillHole[] = [];
+
+  for (const face of faces) {
+    const match = face.name.match(HOLE_BARREL_RE);
+    if (!match) continue;
+
+    const featureName = match[1]; // e.g. "hole_1"
+    if (face.kind !== 'cylindrical') continue;
+    if (!face.radius || !face.axis) continue;
+
+    const diameter = face.radius * 2;
+    const origin = face.origin ?? [0, 0, 0];
+    const axis = face.axis;
+
+    // Determine depth: prefer stored depth, fallback to ray-cast
+    let depth: number;
+    let through = false;
+
+    if (face.depth != null && face.depth > 0) {
+      depth = face.depth;
+      // Check if hole goes through the entire part along its axis
+      const partExtent = Math.abs(
+        axis[0] * (bounds.max[0] - bounds.min[0]) +
+        axis[1] * (bounds.max[1] - bounds.min[1]) +
+        axis[2] * (bounds.max[2] - bounds.min[2])
+      );
+      through = depth >= partExtent - 0.01;
+    } else {
+      // Fallback: ray-cast along hole axis to find depth
+      const maxDepth = 500;
+      const rayStart: Vec3 = [
+        origin[0] + axis[0] * 0.1,
+        origin[1] + axis[1] * 0.1,
+        origin[2] + axis[2] * 0.1,
+      ];
+      const rayDir: Vec3 = [-axis[0], -axis[1], -axis[2]];
+      const t = shape.findSurface(rayStart, rayDir, 0, maxDepth);
+      if (t !== null) {
+        depth = t;
+        through = false;
+      } else {
+        depth = maxDepth;
+        through = true;
+      }
+    }
+
+    // Compute hole top position in SDF convention
+    // After orientToAxis(), barrel axis points INTO material.
+    // Hole top = origin - axis * depth/2
+    const holeTop: Vec3 = [
+      origin[0] - axis[0] * depth / 2,
+      origin[1] - axis[1] * depth / 2,
+      origin[2] - axis[2] * depth / 2,
+    ];
+
+    holes.push({
+      position: holeTop,
+      diameter,
+      depth,
+      through,
+      featureName,
+    });
+  }
+
+  return holes;
+}
+
+/**
+ * Generate a drill cycle toolpath from holes in a shape.
+ *
+ * Validates tool type (must be 'drill') and tool-vs-hole diameter
+ * compatibility. Generates ToolpathPoint[] for visualization and
+ * stats for readback.
+ */
+export function generateDrillCycle(
+  shape: SDF,
+  tool: ToolDefinition,
+  params: DrillCycleParams,
+): Omit<DrillCycleResult, 'id'> {
+  if (tool.type !== 'drill') {
+    throw new Error(
+      `generateDrillCycle() requires a drill tool, got '${tool.type}'. ` +
+      `Use defineTool('drill', diameter) to create a drill.`
+    );
+  }
+
+  const holes = extractDrillHoles(shape);
+  if (holes.length === 0) {
+    throw new Error(
+      'No drillable holes found. Use hole() to create holes with named topology, ' +
+      'then generateDrillCycle() to extract drill positions.'
+    );
+  }
+
+  // Validate tool diameter vs hole diameter (#031)
+  for (const h of holes) {
+    if (tool.diameter > h.diameter + 0.01) {
+      throw new Error(
+        `Drill D${tool.diameter} is larger than ${h.featureName} (D${h.diameter}). ` +
+        `Use a drill no larger than the hole diameter.`
+      );
+    }
+  }
+
+  const rClearance = params.r_clearance ?? 2;
+  const safeY = params.safe_z;
+  const points: ToolpathPoint[] = [];
+
+  for (const h of holes) {
+    const hx = h.position[0];
+    const holeTopY = h.position[1];
+    const hz = h.position[2];
+    const holeBottomY = holeTopY - h.depth;
+
+    // Rapid to safe Z above hole
+    points.push({ x: hx, y: safeY, z: hz, type: 'rapid' });
+    // Rapid to R-plane (just above hole top)
+    points.push({ x: hx, y: holeTopY + rClearance, z: hz, type: 'rapid' });
+
+    if (params.cycle === 'peck') {
+      const peckDepth = params.peck_depth ?? tool.diameter * 1.5;
+      let currentY = holeTopY;
+
+      while (currentY > holeBottomY + 1e-9) {
+        const nextY = Math.max(currentY - peckDepth, holeBottomY);
+        // Plunge to next peck depth
+        points.push({ x: hx, y: nextY, z: hz, type: 'plunge' });
+        // Retract to R-plane
+        points.push({ x: hx, y: holeTopY + rClearance, z: hz, type: 'rapid' });
+        currentY = nextY;
+      }
+    } else {
+      // Standard: single plunge to full depth
+      points.push({ x: hx, y: holeBottomY, z: hz, type: 'plunge' });
+    }
+
+    // Retract to safe Z
+    points.push({ x: hx, y: safeY, z: hz, type: 'rapid' });
+  }
+
+  const stats = computeStats(points, params);
+
+  // Compute bounds from hole positions (#030)
+  let xMin = Infinity, xMax = -Infinity;
+  let yMin = Infinity, yMax = -Infinity;
+  let zMin = Infinity, zMax = -Infinity;
+  for (const p of points) {
+    if (p.type === 'cut' || p.type === 'plunge') {
+      if (p.x < xMin) xMin = p.x;
+      if (p.x > xMax) xMax = p.x;
+      if (p.y < yMin) yMin = p.y;
+      if (p.y > yMax) yMax = p.y;
+      if (p.z < zMin) zMin = p.z;
+      if (p.z > zMax) zMax = p.z;
+    }
+  }
+  if (xMin === Infinity) {
+    xMin = xMax = yMin = yMax = zMin = zMax = 0;
+  }
+
+  return {
+    kind: 'drill' as const,
+    holes,
+    tool,
+    params,
+    shape_name: shape.name,
+    points,
+    bounds: { x: [xMin, xMax], y: [yMin, yMax], z: [zMin, zMax] },
+    stats: { ...stats, z_min: yMin, z_max: yMax },
+  };
 }

@@ -13,7 +13,9 @@ import {
   generateRasterSurfacing,
   generateContourToolpath,
   generateMultiLevelContour,
+  generateDrillCycle,
   emitFanucGCode,
+  emitDrillCycleGCode,
   hole,
   pocket,
   boltCircle,
@@ -28,6 +30,7 @@ import {
   type ToolpathParams,
   type ContourToolpathParams,
   type MultiLevelContourParams,
+  type DrillCycleParams,
   type HoleOptions,
   type PocketOptions,
   type BoltCircleOptions,
@@ -180,7 +183,7 @@ export function executeCode(code: string): ExecuteResult {
       const shank_diameter = typeof typeOrOpts === 'object' ? typeOrOpts.shank_diameter : undefined;
       return {
         name: `${type}-D${dia}`,
-        type: type as 'ballnose' | 'flat',
+        type: type as ToolDefinition['type'],
         diameter: dia,
         radius: dia / 2,
         flute_length,
@@ -233,12 +236,25 @@ export function executeCode(code: string): ExecuteResult {
       console.log('Multi-level contour stats:', result.stats, 'loops:', result.loop_count);
     };
 
+    // showDrillCycle — generate and render drill cycle toolpath
+    const _showDrillCycle = (shape: SDF, tool: ToolDefinition, params: Partial<DrillCycleParams> & { feed_rate: number; rpm: number; safe_z: number }) => {
+      const fullParams: DrillCycleParams = {
+        cycle: 'standard',
+        ...params,
+      };
+      const tp = generateDrillCycle(shape, tool, fullParams);
+      const result = { ...tp, id: 'live' };
+      toolpathVisual = renderToolpath(result);
+      gcodeText = emitDrillCycleGCode(result.holes, result.tool, result.params);
+      console.log('Drill cycle stats:', result.stats, 'holes:', result.holes.length);
+    };
+
     const fn = new Function(
       'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
       'polygon', 'circle2d', 'rect2d', 'extrude', 'revolve',
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
-      'defineTool', 'showToolpath', 'showContour', 'showMultiLevelContour',
+      'defineTool', 'showToolpath', 'showContour', 'showMultiLevelContour', 'showDrillCycle',
       'hole', 'pocket', 'boltCircle',
       'chamfer', 'fillet',
       'findTool', 'listTools', 'listLibraries',
@@ -250,7 +266,7 @@ export function executeCode(code: string): ExecuteResult {
       _polygon, _circle2d, _rect2d, _extrude, _revolve,
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
-      _defineTool, _showToolpath, _showContour, _showMultiLevelContour,
+      _defineTool, _showToolpath, _showContour, _showMultiLevelContour, _showDrillCycle,
       _hole, _pocket, _boltCircle,
       _chamfer, _fillet,
       findTool, listTools, listLibraries,
