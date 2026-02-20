@@ -12,7 +12,10 @@ import {
   marchingCubes,
   generateRasterSurfacing,
   generateContourToolpath,
+  generateMultiLevelContour,
+  generateDrillCycle,
   emitFanucGCode,
+  emitDrillCycleGCode,
   hole,
   pocket,
   boltCircle,
@@ -26,9 +29,12 @@ import {
   type ToolDefinition,
   type ToolpathParams,
   type ContourToolpathParams,
+  type MultiLevelContourParams,
+  type DrillCycleParams,
   type HoleOptions,
   type PocketOptions,
   type BoltCircleOptions,
+  type FaceDescriptor,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
 import { renderToolpath } from './toolpath-renderer.js';
@@ -67,12 +73,13 @@ export function getGCodeText(): string | null {
   return gcodeText;
 }
 
-// ─── Face map state (for hover highlighting) ───────────────────
+// ─── Face map state (for hover status bar info) ─────────────────
 
 export interface FaceMapData {
   faceIds: Int32Array;        // per-triangle face index
   faceNames: string[];        // face index → face name
-  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>;
+  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>;
+  wallThickness: Map<string, number>;  // faceName → distance to closest antiparallel face
 }
 
 let currentFaceMap: FaceMapData | null = null;
@@ -176,7 +183,7 @@ export function executeCode(code: string): ExecuteResult {
       const shank_diameter = typeof typeOrOpts === 'object' ? typeOrOpts.shank_diameter : undefined;
       return {
         name: `${type}-D${dia}`,
-        type: type as 'ballnose' | 'flat',
+        type: type as ToolDefinition['type'],
         diameter: dia,
         radius: dia / 2,
         flute_length,
@@ -214,12 +221,40 @@ export function executeCode(code: string): ExecuteResult {
       console.log('Contour stats:', result.stats, 'loops:', result.loop_count);
     };
 
+    // showMultiLevelContour — generate and render waterline roughing
+    const _showMultiLevelContour = (shape: SDF, tool: ToolDefinition, params: Partial<MultiLevelContourParams> & { z_top: number; z_bottom: number; step_down: number; feed_rate: number; rpm: number; safe_z: number }) => {
+      const fullParams: MultiLevelContourParams = {
+        direction: 'climb',
+        point_spacing: 0.5,
+        resolution: 1.0,
+        ...params,
+      };
+      const tp = generateMultiLevelContour(shape, tool, fullParams);
+      const result = { ...tp, id: 'live' };
+      toolpathVisual = renderToolpath(result);
+      gcodeText = emitFanucGCode(result);
+      console.log('Multi-level contour stats:', result.stats, 'loops:', result.loop_count);
+    };
+
+    // showDrillCycle — generate and render drill cycle toolpath
+    const _showDrillCycle = (shape: SDF, tool: ToolDefinition, params: Partial<DrillCycleParams> & { feed_rate: number; rpm: number; safe_z: number }) => {
+      const fullParams: DrillCycleParams = {
+        cycle: 'standard',
+        ...params,
+      };
+      const tp = generateDrillCycle(shape, tool, fullParams);
+      const result = { ...tp, id: 'live' };
+      toolpathVisual = renderToolpath(result);
+      gcodeText = emitDrillCycleGCode(result.holes, result.tool, result.params);
+      console.log('Drill cycle stats:', result.stats, 'holes:', result.holes.length);
+    };
+
     const fn = new Function(
       'box', 'sphere', 'cylinder', 'cone', 'torus', 'plane',
       'polygon', 'circle2d', 'rect2d', 'extrude', 'revolve',
       'union', 'subtract', 'intersect',
       'computeMesh', 'exportSTL',
-      'defineTool', 'showToolpath', 'showContour',
+      'defineTool', 'showToolpath', 'showContour', 'showMultiLevelContour', 'showDrillCycle',
       'hole', 'pocket', 'boltCircle',
       'chamfer', 'fillet',
       'findTool', 'listTools', 'listLibraries',
@@ -231,7 +266,7 @@ export function executeCode(code: string): ExecuteResult {
       _polygon, _circle2d, _rect2d, _extrude, _revolve,
       _union, _subtract, _intersect,
       computeMesh, _exportSTL,
-      _defineTool, _showToolpath, _showContour,
+      _defineTool, _showToolpath, _showContour, _showMultiLevelContour, _showDrillCycle,
       _hole, _pocket, _boltCircle,
       _chamfer, _fillet,
       findTool, listTools, listLibraries,
@@ -259,6 +294,7 @@ export function executeCode(code: string): ExecuteResult {
   }
 }
 
+
 /** Convert kernel TriangleMesh to Three.js BufferGeometry + Mesh + Edges. */
 function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   if (triMesh.triangleCount === 0) {
@@ -280,18 +316,11 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   geometry.computeBoundingBox();
   geometry.computeBoundingSphere();
 
-  // Vertex colors for face highlighting (default white = no tint)
-  const colors = new Float32Array(positions.length);
-  colors.fill(1.0);
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-  // Gold material with vertex colors enabled
   const material = new THREE.MeshStandardMaterial({
     color: HEX.geometry,
     metalness: 0.3,
     roughness: 0.5,
     side: THREE.DoubleSide,
-    vertexColors: true,
   });
   const mesh = new THREE.Mesh(geometry, material);
 
@@ -316,14 +345,13 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   const bounds = new THREE.Box3();
   bounds.setFromBufferAttribute(geometry.getAttribute('position') as THREE.BufferAttribute);
 
-  // ─── Face classification (for hover highlighting) ─────────────
+  // ─── Face classification (for hover status bar info) ───────────
   if (sdf && triMesh.triangleCount <= 200_000) {
     const faceIds = new Int32Array(triMesh.triangleCount);
     const faceNames: string[] = [];
     const faceNameToId = new Map<string, number>();
-    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>();
+    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>();
 
-    // Pre-fetch all face descriptors for status bar info
     const allFaces = sdf.faces();
     const faceByName = new Map(allFaces.map(f => [f.name, f]));
 
@@ -345,12 +373,16 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
             kind: desc.kind,
             origin: desc.origin as [number, number, number] | undefined,
             radius: desc.radius,
+            edgeBreakSize: desc.edgeBreakSize,
+            edgeBreakMode: desc.edgeBreakMode,
           });
         }
       }
       faceIds[i] = id;
     }
-    currentFaceMap = { faceIds, faceNames, faceInfo };
+
+    const wallThickness = computeWallThicknesses(allFaces);
+    currentFaceMap = { faceIds, faceNames, faceInfo, wallThickness };
   } else {
     currentFaceMap = null;
   }
@@ -363,4 +395,27 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
     triangleCount: triMesh.triangleCount,
     bounds,
   };
+}
+
+/** Compute wall thickness for planar faces — distance to closest antiparallel face. */
+function computeWallThicknesses(allFaces: FaceDescriptor[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const face of allFaces) {
+    if (face.kind !== 'planar' || !face.origin) continue;
+    let minDist = Infinity;
+    for (const other of allFaces) {
+      if (other.name === face.name || other.kind !== 'planar' || !other.origin) continue;
+      const dot = face.normal[0] * other.normal[0] +
+                  face.normal[1] * other.normal[1] +
+                  face.normal[2] * other.normal[2];
+      if (dot > -0.99) continue;
+      const dx = other.origin[0] - face.origin[0];
+      const dy = other.origin[1] - face.origin[1];
+      const dz = other.origin[2] - face.origin[2];
+      const dist = Math.abs(dx * face.normal[0] + dy * face.normal[1] + dz * face.normal[2]);
+      if (dist < minDist) minDist = dist;
+    }
+    if (minDist < Infinity) result.set(face.name, minDist);
+  }
+  return result;
 }

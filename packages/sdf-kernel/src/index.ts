@@ -30,8 +30,10 @@ export { exportSTL } from './stl.js';
 
 // Toolpath generation
 export type { ToolDefinition, ToolpathPoint, ToolpathParams, ToolpathResult, ToolpathStats } from './toolpath.js';
-export type { ContourToolpathParams, ContourToolpathResult } from './toolpath.js';
-export { generateRasterSurfacing, generateContourToolpath } from './toolpath.js';
+export type { BaseContourParams, ContourToolpathParams, MultiLevelContourParams, ContourToolpathResult, MultiLevelContourResult } from './toolpath.js';
+export type { DrillHole, DrillCycleParams, DrillCycleResult } from './toolpath.js';
+export { generateRasterSurfacing, generateContourToolpath, generateMultiLevelContour } from './toolpath.js';
+export { extractDrillHoles, generateDrillCycle } from './toolpath.js';
 
 // Marching squares (2D contour extraction)
 export type { ContourLoop } from './marching-squares.js';
@@ -39,7 +41,7 @@ export { extractContours } from './marching-squares.js';
 
 // G-code emission
 export type { GCodeConfig } from './gcode.js';
-export { emitFanucGCode } from './gcode.js';
+export { emitFanucGCode, emitDrillCycleGCode } from './gcode.js';
 
 // Feature constructors (semantic DSL)
 export { hole, pocket, boltCircle, chamfer, fillet } from './features.js';

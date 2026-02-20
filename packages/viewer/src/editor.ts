@@ -103,21 +103,22 @@ const lightHighlight = HighlightStyle.define([
 
 // ─── Default code ─────────────────────────────────────────
 
-const DEFAULT_CODE = `// Agent CAD — live editor
-// Tool from Haas library: 8mm ballnose
+const DEFAULT_CODE = `// Agent CAD — drill cycle demo
+// Plate with bolt circle + center hole
 
 const shape = hole(
-  hole(
-    box(80, 30, 60),
-    'top', { diameter: 10, depth: 'through', at: [25, 0, 15] }
+  boltCircle(
+    box(100, 30, 80),
+    'top', { holeDiameter: 8, depth: 'through', boltCircleDiameter: 60, count: 6 }
   ),
-  'top', { diameter: 10, depth: 'through', at: [-25, 0, -15] }
+  'top', { diameter: 16, depth: 15 }
 )
 
-// Pull 8mm ballnose from Haas tool crib
-const tool = findTool('haas', 'ballnose', 8)
-showToolpath(shape, tool, {
-  feed_rate: 4800, rpm: 12000, safe_z: 25, stepover_pct: 10
+// 8mm drill, peck cycle
+const tool = defineTool('drill', 8)
+showDrillCycle(shape, tool, {
+  cycle: 'peck', peck_depth: 3,
+  feed_rate: 800, rpm: 3000, safe_z: 25
 })
 `;
 

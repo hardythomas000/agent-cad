@@ -58,7 +58,7 @@ export function findTool(
 
   return {
     name: `${machine}-${type}-D${best.diameter}`,
-    type: type === 'ballnose' ? 'ballnose' : 'ballnose', // kernel only supports ballnose for now
+    type: type as ToolDefinition['type'],
     diameter: best.diameter,
     radius: best.diameter / 2,
     flute_length: best.flute_length,

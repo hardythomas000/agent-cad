@@ -357,7 +357,7 @@ export class Cylinder extends SDF {
     return [
       { name: 'top_cap',    normal: [0, 0, 1],  kind: 'planar', origin: [0, 0, hh] },
       { name: 'bottom_cap', normal: [0, 0, -1], kind: 'planar', origin: [0, 0, -hh] },
-      { name: 'barrel',     normal: [1, 0, 0],  kind: 'cylindrical', radius: this.radius, axis: [0, 0, 1] },
+      { name: 'barrel',     normal: [1, 0, 0],  kind: 'cylindrical', radius: this.radius, axis: [0, 0, 1], depth: this.height, origin: [0, 0, 0] },
     ];
   }
   edges(): EdgeDescriptor[] {
@@ -1044,6 +1044,8 @@ export class EdgeBreak extends SDF {
         name: `${this.featureName}.face`,
         normal: normalize(add(this.faceA.normal, this.faceB.normal)),
         kind: 'freeform' as const,
+        edgeBreakSize: this.size,
+        edgeBreakMode: this.mode,
       },
     ];
   }

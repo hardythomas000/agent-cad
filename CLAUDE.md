@@ -23,7 +23,7 @@ An SDF-based geometry kernel with an MCP server that lets LLMs author CAD geomet
 - `packages/viewer/src/editor.ts` — CodeMirror 6 with teal/gold/copper theme
 
 ## MCP Server
-Registered in `~/.claude.json`. Exposes 43 tools:
+Registered in `~/.claude.json`. Exposes 44 tools:
 - **Primitives (6):** create_box, create_sphere, create_cylinder, create_cone, create_torus, create_plane
 - **2D Profiles (3):** create_polygon, create_circle_2d, create_rect_2d
 - **2D → 3D (2):** extrude, revolve
@@ -33,7 +33,7 @@ Registered in `~/.claude.json`. Exposes 43 tools:
 - **Modifiers (3):** shell, round_edges, elongate
 - **Queries (3):** get_shape, evaluate_point, drop_cutter
 - **Mesh (2):** compute_mesh, export_mesh
-- **CAM (4):** define_tool, generate_surfacing_toolpath, generate_contour_toolpath, export_gcode
+- **CAM (5):** define_tool, generate_surfacing_toolpath, generate_contour_toolpath, generate_multilevel_contour, export_gcode
 - **Topology (4):** query_faces, query_face, classify_point, query_edges
 - **Semantic Features (3):** create_hole, create_pocket, create_bolt_circle
 - **Edge Operations (2):** chamfer_edge, fillet_edge
@@ -46,7 +46,7 @@ Every tool returns structured JSON readback (shape_id, type, bounds, size, cente
 # Build everything
 npm run build
 
-# Run tests (374 passing)
+# Run tests (397 passing)
 npm test
 
 # Build just the kernel
@@ -69,13 +69,13 @@ npm run dev:viewer
 - 2D profiles: polygon, circle2d, rect2d + extrude/revolve (drawing→SDF bridge)
 - Marching cubes mesh extraction
 - Binary STL export
-- MCP server with 43 tools (incl. 2D profiles, CAM, G-code, topology, edge operations)
+- MCP server with 44 tools (incl. 2D profiles, CAM, G-code, topology, edge operations)
 - Shape registry with structured readback
 - Root finding (sphere tracing + bisection)
 - 3-axis raster surfacing toolpath (drop-cutter based)
 - 2D contour/profile toolpath (marching squares + SDF offset)
 - Fanuc G-code emission (surfacing + contour)
-- 379 tests passing
+- 397 tests passing
 - First LLM-authored geometry demo: bracket with pocket + 2 through-holes (bracket.stl)
 - Viewer v1: Three.js STL viewer + CodeMirror 6 editor + split pane (Vite app)
 - Viewer v2: live kernel connection — editor DSL executes against kernel, mesh renders in viewport (debounced, Ctrl+Enter, error overlay)
@@ -85,6 +85,8 @@ npm run dev:viewer
 - Semantic DSL v2: chamfer(), fillet() — edge operations on named edges (EdgeBreak SDF node)
 - Viewer v3: face highlighting on hover with status bar readout (raycaster + vertex colors)
 - CAM v2: contour toolpath — marching squares contour extraction + SDF-native tool offset
+- CAM v3: multi-level contour roughing (Z-level waterline) with leave_stock support
+- Viewer v4: dimension readout — hover shows hole diameter, wall thickness, chamfer/fillet size
 - Benchmark gates: 5 timed performance gates on marching cubes, raster surfacing, contour toolpath, marching squares
 
 ### Not Started

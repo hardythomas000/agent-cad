@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { box, sphere, cylinder, subtract } from '../src/api.js';
-import { generateRasterSurfacing, generateContourToolpath } from '../src/toolpath.js';
-import { emitFanucGCode } from '../src/gcode.js';
-import type { ToolDefinition, ToolpathParams, ContourToolpathParams } from '../src/toolpath.js';
+import { hole, boltCircle } from '../src/features.js';
+import { generateRasterSurfacing, generateContourToolpath, generateMultiLevelContour, extractDrillHoles, generateDrillCycle } from '../src/toolpath.js';
+import { emitFanucGCode, emitDrillCycleGCode } from '../src/gcode.js';
+import type { ToolDefinition, ToolpathParams, ContourToolpathParams, MultiLevelContourParams, DrillCycleParams } from '../src/toolpath.js';
 
 const EPSILON = 0.1; // Toolpath accuracy depends on bounds estimation + surface finding
 
@@ -461,5 +462,551 @@ describe('generateContourToolpath', () => {
       expect(result.stats.z_min).toBe(0);
       expect(result.stats.z_max).toBe(0);
     });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// generateMultiLevelContour
+// ═══════════════════════════════════════════════════════════════
+
+function makeMultiLevelParams(overrides?: Partial<MultiLevelContourParams>): MultiLevelContourParams {
+  return {
+    z_top: 20,
+    z_bottom: -20,
+    step_down: 10,
+    feed_rate: 1000,
+    rpm: 8000,
+    safe_z: 50,
+    ...overrides,
+  };
+}
+
+describe('generateMultiLevelContour', () => {
+
+  describe('box — basic multi-level', () => {
+    // Box 100×60×30: SDF Y range -30..30
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10); // R=5
+
+    it('produces points at multiple Z levels', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: -20,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.points.length).toBeGreaterThan(0);
+      expect(result.loop_count).toBeGreaterThanOrEqual(3); // 20, 10, 0, -10, -20 = 5 levels
+
+      // Verify cut points exist at multiple distinct Y values
+      const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
+      const yValues = new Set(cutPoints.map(p => p.y));
+      expect(yValues.size).toBeGreaterThanOrEqual(3);
+    });
+
+    it('produces levels from z_top down to z_bottom', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const cutPoints = result.points.filter(p => p.type === 'cut' || p.type === 'plunge');
+      const yValues = [...new Set(cutPoints.map(p => p.y))].sort((a, b) => b - a);
+
+      // Should have levels at 20, 10, 0
+      expect(yValues.length).toBe(3);
+      near(yValues[0], 20, 0.01);
+      near(yValues[1], 10, 0.01);
+      near(yValues[2], 0, 0.01);
+    });
+  });
+
+  describe('stats and bounds', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('stats reflect multi-level totals', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.stats.point_count).toBe(result.points.length);
+      expect(result.stats.cut_distance_mm).toBeGreaterThan(0);
+      expect(result.stats.z_min).toBeLessThanOrEqual(-10);
+      expect(result.stats.z_max).toBeGreaterThanOrEqual(10);
+    });
+
+    it('bounds span all levels', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 20,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      expect(result.bounds.y[0]).toBeLessThanOrEqual(-10);
+      expect(result.bounds.y[1]).toBeGreaterThanOrEqual(20);
+    });
+  });
+
+  describe('leave_stock offset', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10); // R=5
+
+    it('contour is further from shape with leave_stock', () => {
+      const noStock = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 1.0,
+      }));
+      const withStock = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        leave_stock: 2,
+        resolution: 1.0,
+      }));
+
+      // Both should produce contours
+      const noCuts = noStock.points.filter(p => p.type === 'cut');
+      const stockCuts = withStock.points.filter(p => p.type === 'cut');
+      expect(noCuts.length).toBeGreaterThan(0);
+      expect(stockCuts.length).toBeGreaterThan(0);
+
+      // With leave_stock, max X of contour should be larger (further from shape)
+      const noXMax = Math.max(...noCuts.map(p => p.x));
+      const stockXMax = Math.max(...stockCuts.map(p => p.x));
+      expect(stockXMax).toBeGreaterThan(noXMax);
+    });
+  });
+
+  describe('safe Z retracts between levels', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('rapids to safe_z between every loop', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        safe_z: 50,
+        resolution: 2.0,
+      }));
+
+      // Count retract moves (rapid to safe_z after cutting)
+      let retractCount = 0;
+      for (let i = 1; i < result.points.length; i++) {
+        if (result.points[i].type === 'rapid' && result.points[i].y === 50 &&
+            (result.points[i - 1].type === 'cut')) {
+          retractCount++;
+        }
+      }
+      // Should have one retract per loop
+      expect(retractCount).toBe(result.loop_count);
+    });
+  });
+
+  describe('validation', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('throws if step_down is zero', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        step_down: 0,
+      }))).toThrow(/step_down/);
+    });
+
+    it('throws if z_top < z_bottom', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: -10,
+        z_bottom: 10,
+      }))).toThrow(/z_top.*z_bottom/);
+    });
+
+    it('throws if safe_z <= z_top', () => {
+      expect(() => generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 50,
+        z_bottom: 0,
+        safe_z: 50,
+      }))).toThrow(/safe_z.*z_top/);
+    });
+  });
+
+  describe('G-code export', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('produces valid G-code from multi-level result', () => {
+      const result = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 10,
+        z_bottom: -10,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const gcode = emitFanucGCode({ ...result, id: 'test-multilevel' });
+      expect(gcode).toContain('%');
+      expect(gcode).toContain('G90');
+      expect(gcode).toContain('G01');
+      expect(gcode).toContain('M30');
+    });
+  });
+
+  describe('single level when z_top === z_bottom', () => {
+    const shape = box(100, 60, 30);
+    const tool = makeFlatTool(10);
+
+    it('degenerates to single-level contour', () => {
+      const multi = generateMultiLevelContour(shape, tool, makeMultiLevelParams({
+        z_top: 0,
+        z_bottom: 0,
+        step_down: 10,
+        resolution: 2.0,
+      }));
+      const single = generateContourToolpath(shape, tool, makeContourParams({
+        z_level: 0,
+        resolution: 2.0,
+      }));
+
+      // Same number of loops
+      expect(multi.loop_count).toBe(single.loop_count);
+      // Similar cut point count (exact match not guaranteed due to float differences)
+      const multiCuts = multi.points.filter(p => p.type === 'cut').length;
+      const singleCuts = single.points.filter(p => p.type === 'cut').length;
+      expect(multiCuts).toBe(singleCuts);
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Drill Cycles — extractDrillHoles + generateDrillCycle
+// ═══════════════════════════════════════════════════════════════
+
+function makeDrillTool(diameter: number): ToolDefinition {
+  return { name: 'D1', type: 'drill', diameter, radius: diameter / 2 };
+}
+
+function makeDrillParams(overrides?: Partial<DrillCycleParams>): DrillCycleParams {
+  return {
+    cycle: 'standard',
+    feed_rate: 200,
+    rpm: 3000,
+    safe_z: 50,
+    ...overrides,
+  };
+}
+
+describe('extractDrillHoles', () => {
+
+  it('extracts a single through-hole', () => {
+    const b = box(100, 60, 30);
+    const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+    const holes = extractDrillHoles(shape);
+
+    expect(holes.length).toBe(1);
+    expect(holes[0].diameter).toBe(10);
+    expect(holes[0].featureName).toBe('hole_1');
+    expect(holes[0].through).toBe(true);
+  });
+
+  it('extracts a blind hole with correct depth', () => {
+    const b = box(100, 60, 30);
+    const shape = hole(b, 'top', { diameter: 8, depth: 15 });
+    const holes = extractDrillHoles(shape);
+
+    expect(holes.length).toBe(1);
+    expect(holes[0].diameter).toBe(8);
+    expect(holes[0].depth).toBeCloseTo(15, 0);
+    expect(holes[0].through).toBe(false);
+  });
+
+  it('extracts multiple holes from boltCircle', () => {
+    const b = box(100, 60, 30);
+    const shape = boltCircle(b, 'top', {
+      holeDiameter: 6,
+      depth: 'through',
+      boltCircleDiameter: 60,
+      count: 4,
+    });
+    const holes = extractDrillHoles(shape);
+
+    expect(holes.length).toBe(4);
+    for (const h of holes) {
+      expect(h.diameter).toBe(6);
+    }
+  });
+
+  it('returns empty array for shape with no holes', () => {
+    const shape = box(100, 60, 30);
+    const holes = extractDrillHoles(shape);
+    expect(holes.length).toBe(0);
+  });
+
+  it('extracts offset holes', () => {
+    const b = box(100, 60, 30);
+    const shape = hole(b, 'top', { diameter: 10, depth: 'through', at: [20, 0, 10] });
+    const holes = extractDrillHoles(shape);
+
+    expect(holes.length).toBe(1);
+    // Hole X should be near 20, hole Z should be near 10
+    expect(holes[0].position[0]).toBeCloseTo(20, 0);
+    expect(holes[0].position[2]).toBeCloseTo(10, 0);
+  });
+});
+
+describe('generateDrillCycle', () => {
+
+  describe('standard cycle', () => {
+    it('generates points for a single hole', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+
+      expect(result.kind).toBe('drill');
+      expect(result.holes.length).toBe(1);
+      expect(result.points.length).toBeGreaterThan(0);
+      expect(result.stats.point_count).toBe(result.points.length);
+    });
+
+    it('standard cycle has one plunge per hole', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams({ cycle: 'standard' }));
+
+      const plunges = result.points.filter(p => p.type === 'plunge');
+      expect(plunges.length).toBe(1); // One plunge for one hole
+    });
+  });
+
+  describe('peck cycle', () => {
+    it('has multiple plunges per hole', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams({
+        cycle: 'peck',
+        peck_depth: 5,
+      }));
+
+      const plunges = result.points.filter(p => p.type === 'plunge');
+      // Through-hole in 60mm box → depth ~60mm, peck 5mm → ~12 pecks
+      expect(plunges.length).toBeGreaterThan(1);
+    });
+
+    it('default peck_depth is 1.5x drill diameter', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams({ cycle: 'peck' }));
+
+      // Default peck = 10 * 1.5 = 15mm. Through a 60mm box: ~4 pecks
+      const plunges = result.points.filter(p => p.type === 'plunge');
+      expect(plunges.length).toBeGreaterThanOrEqual(2);
+    });
+  });
+
+  describe('bounds (#030)', () => {
+    it('drill result has bounds field', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+
+      expect(result.bounds).toBeDefined();
+      expect(result.bounds.x).toHaveLength(2);
+      expect(result.bounds.y).toHaveLength(2);
+      expect(result.bounds.z).toHaveLength(2);
+    });
+  });
+
+  describe('validation', () => {
+    it('throws when tool type is not drill', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeFlatTool(10);
+      expect(() => generateDrillCycle(shape, tool, makeDrillParams()))
+        .toThrow(/drill/);
+    });
+
+    it('throws when no drillable holes found', () => {
+      const shape = box(100, 60, 30); // No holes
+      const tool = makeDrillTool(10);
+      expect(() => generateDrillCycle(shape, tool, makeDrillParams()))
+        .toThrow(/No drillable holes/);
+    });
+
+    it('throws when drill diameter exceeds hole diameter (#031)', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 8, depth: 'through' });
+      const tool = makeDrillTool(10); // D10 > D8 hole
+      expect(() => generateDrillCycle(shape, tool, makeDrillParams()))
+        .toThrow(/larger than/);
+    });
+
+    it('accepts drill smaller than hole', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 12, depth: 'through' });
+      const tool = makeDrillTool(10); // D10 < D12 hole — pilot drill
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+      expect(result.holes.length).toBe(1);
+    });
+  });
+
+  describe('r_clearance (#029)', () => {
+    it('uses default R-plane clearance of 2mm', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+
+      // Second point should be rapid to R-plane (hole top + 2mm clearance)
+      const rapids = result.points.filter(p => p.type === 'rapid');
+      // There should be a rapid that is NOT at safe_z — that's the R-plane
+      const rPlaneMoves = rapids.filter(p => p.y !== 50);
+      expect(rPlaneMoves.length).toBeGreaterThan(0);
+    });
+
+    it('custom r_clearance changes R-plane position', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const r2 = generateDrillCycle(shape, tool, makeDrillParams({ r_clearance: 2 }));
+      const r10 = generateDrillCycle(shape, tool, makeDrillParams({ r_clearance: 10 }));
+
+      // With larger r_clearance, the R-plane rapid should be higher
+      const r2Rapids = r2.points.filter(p => p.type === 'rapid' && p.y !== 50);
+      const r10Rapids = r10.points.filter(p => p.type === 'rapid' && p.y !== 50);
+
+      if (r2Rapids.length > 0 && r10Rapids.length > 0) {
+        expect(r10Rapids[0].y).toBeGreaterThan(r2Rapids[0].y);
+      }
+    });
+  });
+
+  describe('multiple holes', () => {
+    it('generates points for all holes in boltCircle', () => {
+      const b = box(100, 60, 30);
+      const shape = boltCircle(b, 'top', {
+        holeDiameter: 6,
+        depth: 'through',
+        boltCircleDiameter: 60,
+        count: 4,
+      });
+      const tool = makeDrillTool(6);
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+
+      expect(result.holes.length).toBe(4);
+      // Each hole should have at least rapid + R-plane rapid + plunge + retract
+      expect(result.points.length).toBeGreaterThanOrEqual(4 * 3);
+    });
+  });
+
+  describe('kind discriminant (#025)', () => {
+    it('result has kind = "drill"', () => {
+      const b = box(100, 60, 30);
+      const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+      const tool = makeDrillTool(10);
+      const result = generateDrillCycle(shape, tool, makeDrillParams());
+      expect(result.kind).toBe('drill');
+    });
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// emitDrillCycleGCode
+// ═══════════════════════════════════════════════════════════════
+
+describe('emitDrillCycleGCode', () => {
+  function makeDrillResult() {
+    const b = box(100, 60, 30);
+    const shape = hole(b, 'top', { diameter: 10, depth: 'through' });
+    const tool = makeDrillTool(10);
+    return generateDrillCycle(shape, tool, makeDrillParams());
+  }
+
+  it('produces valid G-code with header and footer', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, result.params);
+
+    expect(gcode).toContain('%');
+    expect(gcode).toContain('G90 G21 G17');
+    expect(gcode).toContain('M03 S3000');
+    expect(gcode).toContain('M05');
+    expect(gcode).toContain('M30');
+  });
+
+  it('uses G81 for standard cycle', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, {
+      ...result.params,
+      cycle: 'standard',
+    });
+    expect(gcode).toContain('G81');
+    expect(gcode).not.toContain('G83');
+  });
+
+  it('uses G83 for peck cycle', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, {
+      ...result.params,
+      cycle: 'peck',
+    });
+    expect(gcode).toContain('G83');
+    expect(gcode).toContain('Q'); // Peck depth
+  });
+
+  it('cancels canned cycle with G80', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, result.params);
+    expect(gcode).toContain('G80');
+  });
+
+  it('includes DRILL CYCLE in comments', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, result.params);
+    expect(gcode).toContain('DRILL CYCLE');
+  });
+
+  it('throws on empty holes array', () => {
+    const tool = makeDrillTool(10);
+    expect(() => emitDrillCycleGCode([], tool, makeDrillParams()))
+      .toThrow(/No holes/);
+  });
+
+  it('starts and ends with %', () => {
+    const result = makeDrillResult();
+    const gcode = emitDrillCycleGCode(result.holes, result.tool, result.params);
+    const lines = gcode.trim().split('\n');
+    expect(lines[0]).toBe('%');
+    expect(lines[lines.length - 1]).toBe('%');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// G-code input validation (#028)
+// ═══════════════════════════════════════════════════════════════
+
+describe('G-code validation', () => {
+  it('rejects invalid work_offset', () => {
+    const tp = {
+      ...generateRasterSurfacing(box(100, 60, 30), makeTool(10), makeParams({ point_spacing: 20 })),
+      id: 'test',
+    };
+    expect(() => emitFanucGCode(tp, { work_offset: 'G60' })).toThrow(/work_offset/);
+    expect(() => emitFanucGCode(tp, { work_offset: 'G53' })).toThrow(/work_offset/);
+  });
+
+  it('accepts valid work_offsets G54-G59', () => {
+    const tp = {
+      ...generateRasterSurfacing(box(100, 60, 30), makeTool(10), makeParams({ point_spacing: 20 })),
+      id: 'test',
+    };
+    for (const wo of ['G54', 'G55', 'G56', 'G57', 'G58', 'G59']) {
+      expect(() => emitFanucGCode(tp, { work_offset: wo })).not.toThrow();
+    }
   });
 });

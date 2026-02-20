@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { box, cylinder, hole, pocket, boltCircle, chamfer, fillet } from '../src/index.js';
+import { box, sphere, cylinder, hole, pocket, boltCircle, chamfer, fillet } from '../src/index.js';
 import type { Vec3 } from '../src/index.js';
 
 const EPSILON = 0.5; // SDF tolerance for marching cubes grid alignment
@@ -658,5 +658,113 @@ describe('chamfer/fillet — after boolean operations', () => {
     const result = chamfer(withHole, 'top.right', 3);
     expect(result.evaluate([50, 30, 0])).toBeGreaterThan(0);
     expect(result.evaluate([0, 0, 0])).toBeGreaterThan(0); // hole cavity
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// EdgeBreak face descriptor — edgeBreakSize / edgeBreakMode
+// ═══════════════════════════════════════════════════════════════
+
+describe('EdgeBreak face descriptor — dimension readout fields', () => {
+  it('chamfer face reports edgeBreakSize and mode=chamfer', () => {
+    const b = box(100, 60, 30);
+    const result = chamfer(b, 'top.right', 5);
+    const breakFace = result.faces().find(f => f.name === 'chamfer_1.face');
+    expect(breakFace).toBeDefined();
+    expect(breakFace!.edgeBreakSize).toBe(5);
+    expect(breakFace!.edgeBreakMode).toBe('chamfer');
+  });
+
+  it('fillet face reports edgeBreakSize and mode=fillet', () => {
+    const b = box(100, 60, 30);
+    const result = fillet(b, 'top.front', 3);
+    const breakFace = result.faces().find(f => f.name === 'fillet_1.face');
+    expect(breakFace).toBeDefined();
+    expect(breakFace!.edgeBreakSize).toBe(3);
+    expect(breakFace!.edgeBreakMode).toBe('fillet');
+  });
+
+  it('non-EdgeBreak faces have no edgeBreakSize', () => {
+    const b = box(100, 60, 30);
+    for (const face of b.faces()) {
+      expect(face.edgeBreakSize).toBeUndefined();
+      expect(face.edgeBreakMode).toBeUndefined();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Wall thickness computation (pure algorithm test)
+// ═══════════════════════════════════════════════════════════════
+
+/** Same algorithm as viewer's computeWallThicknesses — tested here for unit coverage. */
+function computeWallThicknesses(allFaces: { name: string; kind: string; normal: number[]; origin?: number[] }[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const face of allFaces) {
+    if (face.kind !== 'planar' || !face.origin) continue;
+    let minDist = Infinity;
+    for (const other of allFaces) {
+      if (other.name === face.name || other.kind !== 'planar' || !other.origin) continue;
+      const dot = face.normal[0] * other.normal[0] +
+                  face.normal[1] * other.normal[1] +
+                  face.normal[2] * other.normal[2];
+      if (dot > -0.99) continue;
+      const dx = other.origin[0] - face.origin[0];
+      const dy = other.origin[1] - face.origin[1];
+      const dz = other.origin[2] - face.origin[2];
+      const dist = Math.abs(dx * face.normal[0] + dy * face.normal[1] + dz * face.normal[2]);
+      if (dist < minDist) minDist = dist;
+    }
+    if (minDist < Infinity) result.set(face.name, minDist);
+  }
+  return result;
+}
+
+describe('computeWallThicknesses', () => {
+  it('box — all 6 faces have correct wall thickness', () => {
+    const b = box(100, 60, 30);
+    const wt = computeWallThicknesses(b.faces() as any);
+    // Box 100×60×30: top↔bottom = 60, left↔right = 100, front↔back = 30
+    expect(wt.get('top')).toBeCloseTo(60, 0);
+    expect(wt.get('bottom')).toBeCloseTo(60, 0);
+    expect(wt.get('left')).toBeCloseTo(100, 0);
+    expect(wt.get('right')).toBeCloseTo(100, 0);
+    expect(wt.get('front')).toBeCloseTo(30, 0);
+    expect(wt.get('back')).toBeCloseTo(30, 0);
+  });
+
+  it('box with pocket — pocket has planar faces with wall thicknesses', () => {
+    const b = box(100, 60, 30);
+    const withPocket = pocket(b, 'top', { width: 50, length: 20, depth: 10 });
+    const allFaces = withPocket.faces();
+    const wt = computeWallThicknesses(allFaces as any);
+    // Pocket creates new planar faces (side walls + floor)
+    const pocketPlanarFaces = allFaces.filter(f => f.name.includes('pocket') && f.kind === 'planar');
+    expect(pocketPlanarFaces.length).toBeGreaterThan(0);
+    // At least some pocket faces should have a wall thickness > 0
+    const pocketThicknesses = pocketPlanarFaces
+      .map(f => wt.get(f.name))
+      .filter((t): t is number => t !== undefined);
+    expect(pocketThicknesses.length).toBeGreaterThan(0);
+    for (const t of pocketThicknesses) {
+      expect(t).toBeGreaterThan(0);
+    }
+  });
+
+  it('cylinder — no antiparallel planar pairs, caps have thickness', () => {
+    const c = cylinder(20, 40);
+    const wt = computeWallThicknesses(c.faces() as any);
+    // Cylinder has top_cap and bottom_cap (planar, antiparallel)
+    // Height = 40, so cap-to-cap = 40
+    expect(wt.get('top_cap')).toBeCloseTo(40, 0);
+    expect(wt.get('bottom_cap')).toBeCloseTo(40, 0);
+    // Barrel is cylindrical, not in map
+    expect(wt.has('barrel')).toBe(false);
+  });
+
+  it('sphere — no planar faces, empty map', () => {
+    const s = sphere(20);
+    const wt = computeWallThicknesses(s.faces() as any);
+    expect(wt.size).toBe(0);
   });
 });

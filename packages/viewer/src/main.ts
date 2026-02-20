@@ -23,9 +23,9 @@ const viewportPane = document.getElementById('viewport-pane')!;
 const dropOverlay = document.getElementById('drop-overlay')!;
 const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const statusMode = document.getElementById('status-mode')!;
-const statusFace = document.getElementById('status-face')!;
 const statusTris = document.getElementById('status-tris')!;
 const statusDims = document.getElementById('status-dims')!;
+const statusFace = document.getElementById('status-face')!;
 const emptyState = document.getElementById('empty-state')!;
 const editorError = document.getElementById('editor-error')!;
 const gcodeContent = document.getElementById('gcode-content')!;
@@ -111,9 +111,6 @@ function displayModel(model: LoadedModel, filename: string): void {
   disposeGroup(ctx.edgeGroup);
   disposeGroup(ctx.wireGroup);
   disposeGroup(ctx.toolpathGroup);
-  hoveredFaceId = -1;
-  statusFace.textContent = '';
-
   ctx.modelGroup.add(model.mesh);
   ctx.edgeGroup.add(model.edges);
   ctx.wireGroup.add(model.wireframe);
@@ -135,9 +132,6 @@ function displayGeometry(result: ExecuteSuccess): void {
   disposeGroup(ctx.modelGroup);
   disposeGroup(ctx.edgeGroup);
   disposeGroup(ctx.wireGroup);
-  hoveredFaceId = -1;
-  statusFace.textContent = '';
-
   ctx.modelGroup.add(result.mesh);
   ctx.edgeGroup.add(result.edges);
   ctx.wireGroup.add(result.wireframe);
@@ -359,58 +353,11 @@ document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
   });
 });
 
-// ─── Face highlighting (hover to identify) ──────────────────────
+// ─── Face hover info (status bar readout, no visual highlight) ───
 
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 let hoveredFaceId = -1;
-
-// Highlight tint: vertex color multiplier that shifts gold toward teal
-const HIGHLIGHT_TINT = { r: 0.4, g: 0.9, b: 2.0 };
-
-function highlightFace(faceId: number, faceMap: FaceMapData): void {
-  const mesh = ctx.modelGroup.children[0] as THREE.Mesh | undefined;
-  if (!mesh?.geometry) return;
-  const colorAttr = mesh.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
-  if (!colorAttr) return;
-  const colors = colorAttr.array as Float32Array;
-
-  for (let tri = 0; tri < faceMap.faceIds.length; tri++) {
-    const base = tri * 9; // 3 vertices * 3 components
-    if (faceMap.faceIds[tri] === faceId) {
-      colors[base]     = HIGHLIGHT_TINT.r;
-      colors[base + 1] = HIGHLIGHT_TINT.g;
-      colors[base + 2] = HIGHLIGHT_TINT.b;
-      colors[base + 3] = HIGHLIGHT_TINT.r;
-      colors[base + 4] = HIGHLIGHT_TINT.g;
-      colors[base + 5] = HIGHLIGHT_TINT.b;
-      colors[base + 6] = HIGHLIGHT_TINT.r;
-      colors[base + 7] = HIGHLIGHT_TINT.g;
-      colors[base + 8] = HIGHLIGHT_TINT.b;
-    } else {
-      colors[base]     = 1.0;
-      colors[base + 1] = 1.0;
-      colors[base + 2] = 1.0;
-      colors[base + 3] = 1.0;
-      colors[base + 4] = 1.0;
-      colors[base + 5] = 1.0;
-      colors[base + 6] = 1.0;
-      colors[base + 7] = 1.0;
-      colors[base + 8] = 1.0;
-    }
-  }
-  colorAttr.needsUpdate = true;
-}
-
-function clearHighlight(): void {
-  const mesh = ctx.modelGroup.children[0] as THREE.Mesh | undefined;
-  if (!mesh?.geometry) return;
-  const colorAttr = mesh.geometry.getAttribute('color') as THREE.BufferAttribute | undefined;
-  if (!colorAttr) return;
-  (colorAttr.array as Float32Array).fill(1.0);
-  colorAttr.needsUpdate = true;
-  statusFace.textContent = '';
-}
 
 function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
   const faceName = faceMap.faceNames[faceId];
@@ -423,10 +370,19 @@ function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
   if (info) {
     text += ` (${info.kind})`;
     if (info.radius != null) {
-      text += ` R=${info.radius.toFixed(1)}`;
-    } else if (info.origin) {
-      const [x, y, z] = info.origin;
-      text += ` [${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}]`;
+      text += ` D=${(info.radius * 2).toFixed(1)}mm`;
+    } else if (info.edgeBreakSize != null) {
+      text += info.edgeBreakMode === 'fillet'
+        ? ` R=${info.edgeBreakSize.toFixed(1)}mm`
+        : ` size=${info.edgeBreakSize.toFixed(1)}mm`;
+    } else if (info.kind === 'planar') {
+      const wall = faceMap.wallThickness?.get(faceName);
+      if (wall != null) {
+        text += ` wall=${wall.toFixed(1)}mm`;
+      } else if (info.origin) {
+        const [x, y, z] = info.origin;
+        text += ` [${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}]`;
+      }
     }
   }
   statusFace.textContent = text;
@@ -435,8 +391,6 @@ function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
 function onViewportMouseMove(e: MouseEvent): void {
   const faceMap = getFaceMap();
   if (!faceMap) return;
-
-  // Don't raycast in wireframe-only mode (no solid mesh)
   if (displayMode === 'wire') return;
 
   const rect = viewportPane.getBoundingClientRect();
@@ -447,22 +401,17 @@ function onViewportMouseMove(e: MouseEvent): void {
   const intersects = raycaster.intersectObject(ctx.modelGroup, true);
 
   if (intersects.length > 0 && intersects[0].faceIndex != null) {
-    const triIndex = Math.floor(intersects[0].faceIndex);
-    const faceId = faceMap.faceIds[triIndex];
+    const faceId = faceMap.faceIds[Math.floor(intersects[0].faceIndex)];
     if (faceId !== hoveredFaceId) {
       hoveredFaceId = faceId;
-      highlightFace(faceId, faceMap);
       showFaceInfo(faceId, faceMap);
     }
-  } else {
-    if (hoveredFaceId !== -1) {
-      hoveredFaceId = -1;
-      clearHighlight();
-    }
+  } else if (hoveredFaceId !== -1) {
+    hoveredFaceId = -1;
+    statusFace.textContent = '';
   }
 }
 
-// Throttle mousemove to rAF
 let rafPending = false;
 viewportPane.addEventListener('mousemove', (e) => {
   if (rafPending) return;
@@ -470,10 +419,10 @@ viewportPane.addEventListener('mousemove', (e) => {
   requestAnimationFrame(() => { onViewportMouseMove(e); rafPending = false; });
 });
 
-// Clear highlight when mouse leaves viewport
 viewportPane.addEventListener('mouseleave', () => {
   if (hoveredFaceId !== -1) {
     hoveredFaceId = -1;
-    clearHighlight();
+    statusFace.textContent = '';
   }
 });
+

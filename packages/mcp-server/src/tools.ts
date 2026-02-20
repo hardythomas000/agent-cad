@@ -11,10 +11,11 @@ import {
   box, sphere, cylinder, cone, torus, plane,
   polygon, circle2d, rect2d, extrude, revolve,
   marchingCubes, exportSTL,
-  generateRasterSurfacing, generateContourToolpath, emitFanucGCode,
+  generateRasterSurfacing, generateContourToolpath, generateMultiLevelContour,
+  generateDrillCycle, emitFanucGCode, emitDrillCycleGCode,
   hole, pocket, boltCircle, chamfer, fillet,
   type SDF, type TriangleMesh,
-  type ToolDefinition,
+  type ToolDefinition, type DrillCycleResult,
 } from '@agent-cad/sdf-kernel';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -544,9 +545,9 @@ export function registerTools(server: McpServer): void {
 
   server.tool(
     'define_tool',
-    'Define a cutting tool for CAM toolpath generation. Supports ball nose end mills and flat end mills.',
+    'Define a cutting tool for CAM toolpath generation. Supports ball nose end mills, flat end mills, and drills.',
     {
-      type: z.enum(['ballnose', 'flat']).describe('Tool type'),
+      type: z.enum(['ballnose', 'flat', 'drill']).describe('Tool type'),
       diameter: z.number().positive().describe('Tool diameter in mm'),
       flute_length: z.number().positive().optional().describe('Flute length in mm'),
       shank_diameter: z.number().positive().optional().describe('Shank diameter in mm'),
@@ -600,10 +601,7 @@ export function registerTools(server: McpServer): void {
         zigzag: params.zigzag,
       });
       const elapsed = Date.now() - start;
-      const summary = registry.createToolpath(
-        { ...result, id: '' },
-        params.name,
-      );
+      const summary = registry.createToolpath(result, params.name);
       return {
         content: [{
           type: 'text',
@@ -648,10 +646,7 @@ export function registerTools(server: McpServer): void {
         resolution: params.resolution,
       });
       const elapsed = Date.now() - start;
-      const summary = registry.createContourToolpath(
-        { ...result, id: '' },
-        params.name,
-      );
+      const summary = registry.createToolpath(result, params.name);
       return {
         content: [{
           type: 'text',
@@ -662,8 +657,110 @@ export function registerTools(server: McpServer): void {
   );
 
   server.tool(
+    'generate_multilevel_contour',
+    'Generate a multi-level contour (waterline roughing) toolpath. Steps from z_top down to z_bottom at step_down increments, extracting contours at each level. Supports leave_stock for roughing allowance.',
+    {
+      shape: z.string().describe('ID of shape to machine'),
+      tool: z.string().describe('ID of cutting tool to use'),
+      z_top: z.number().describe('Starting Z level (highest, CNC Z-up convention, in mm)'),
+      z_bottom: z.number().describe('Final Z level (lowest, in mm)'),
+      step_down: z.number().positive().describe('Depth of cut per level in mm'),
+      leave_stock: z.number().min(0).optional()
+        .describe('Radial stock allowance in mm (default: 0). Offsets tool path further from surface.'),
+      direction: z.enum(['climb', 'conventional']).default('climb')
+        .describe('Milling direction: climb (default) or conventional'),
+      point_spacing: z.number().positive().optional()
+        .describe('Point spacing along contour in mm (default: 0.5)'),
+      feed_rate: z.number().positive().describe('Cutting feed rate in mm/min'),
+      plunge_rate: z.number().positive().optional()
+        .describe('Plunge feed rate in mm/min (default: feed_rate / 3)'),
+      rpm: z.number().positive().describe('Spindle speed RPM'),
+      safe_z: z.number().describe('Safe retract height in mm'),
+      resolution: z.number().positive().optional()
+        .describe('Marching squares cell size in mm (default: 1.0). Smaller = finer contour.'),
+      name: z.string().optional().describe('Toolpath name/ID'),
+    },
+    async (params) => {
+      const shapeEntry = registry.get(params.shape);
+      const tool = registry.getTool(params.tool);
+      const start = Date.now();
+      const result = generateMultiLevelContour(shapeEntry.shape, tool, {
+        z_top: params.z_top,
+        z_bottom: params.z_bottom,
+        step_down: params.step_down,
+        leave_stock: params.leave_stock,
+        direction: params.direction,
+        point_spacing: params.point_spacing,
+        feed_rate: params.feed_rate,
+        plunge_rate: params.plunge_rate,
+        rpm: params.rpm,
+        safe_z: params.safe_z,
+        resolution: params.resolution,
+      });
+      const elapsed = Date.now() - start;
+      const summary = registry.createToolpath(result, params.name);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ ...summary, computed_in_ms: elapsed }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
+    'generate_drill_cycle',
+    'Generate a drill cycle toolpath from holes in a shape. Automatically extracts drillable holes from named topology (created via hole()). Supports standard (G81) and peck (G83) drill cycles.',
+    {
+      shape: z.string().describe('ID of shape containing holes'),
+      tool: z.string().describe('ID of drill tool to use'),
+      cycle: z.enum(['standard', 'peck']).default('standard')
+        .describe('Drill cycle type: standard (G81) or peck (G83)'),
+      peck_depth: z.number().positive().optional()
+        .describe('Peck depth in mm (peck cycle only, default: 1.5x drill diameter)'),
+      r_clearance: z.number().positive().optional()
+        .describe('R-plane clearance above hole top in mm (default: 2)'),
+      feed_rate: z.number().positive().describe('Drilling feed rate in mm/min'),
+      rpm: z.number().positive().describe('Spindle speed RPM'),
+      safe_z: z.number().describe('Safe retract height in mm'),
+      name: z.string().optional().describe('Toolpath name/ID'),
+    },
+    async (params) => {
+      const shapeEntry = registry.get(params.shape);
+      const tool = registry.getTool(params.tool);
+      const start = Date.now();
+      const result = generateDrillCycle(shapeEntry.shape, tool, {
+        cycle: params.cycle,
+        peck_depth: params.peck_depth,
+        r_clearance: params.r_clearance,
+        feed_rate: params.feed_rate,
+        rpm: params.rpm,
+        safe_z: params.safe_z,
+      });
+      const elapsed = Date.now() - start;
+      const summary = registry.createToolpath(result, params.name);
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            ...summary,
+            computed_in_ms: elapsed,
+            hole_count: result.holes.length,
+            holes: result.holes.map(h => ({
+              feature: h.featureName,
+              diameter: h.diameter,
+              depth: h.depth,
+              through: h.through,
+            })),
+          }),
+        }],
+      };
+    }
+  );
+
+  server.tool(
     'export_gcode',
-    'Export a toolpath as Fanuc-compatible G-code (.nc file). Must call generate_surfacing_toolpath or generate_contour_toolpath first.',
+    'Export a toolpath as Fanuc-compatible G-code (.nc file). Works with surfacing, contour, multilevel contour, and drill cycle toolpaths.',
     {
       toolpath: z.string().describe('ID of toolpath to export'),
       program_number: z.number().int().min(1).max(9999).optional()
@@ -675,11 +772,19 @@ export function registerTools(server: McpServer): void {
     },
     async (params) => {
       const toolpath = registry.getToolpath(params.toolpath);
-      const gcode = emitFanucGCode(toolpath, {
+      const gcodeConfig = {
         program_number: params.program_number,
         work_offset: params.work_offset,
         coolant: params.coolant,
-      });
+      };
+
+      let gcode: string;
+      if (toolpath.kind === 'drill') {
+        const drillTp = toolpath as DrillCycleResult;
+        gcode = emitDrillCycleGCode(drillTp.holes, drillTp.tool, drillTp.params, gcodeConfig);
+      } else {
+        gcode = emitFanucGCode(toolpath, gcodeConfig);
+      }
 
       // Write to output directory
       const exportDir = path.join(process.env.TMPDIR ?? '/tmp', 'agent-cad');
