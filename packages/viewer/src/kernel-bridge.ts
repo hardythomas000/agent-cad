@@ -34,6 +34,7 @@ import {
   type HoleOptions,
   type PocketOptions,
   type BoltCircleOptions,
+  type FaceDescriptor,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
 import { renderToolpath } from './toolpath-renderer.js';
@@ -72,6 +73,21 @@ export function getGCodeText(): string | null {
   return gcodeText;
 }
 
+// ─── Face map state (for hover status bar info) ─────────────────
+
+export interface FaceMapData {
+  faceIds: Int32Array;        // per-triangle face index
+  faceNames: string[];        // face index → face name
+  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>;
+  wallThickness: Map<string, number>;  // faceName → distance to closest antiparallel face
+}
+
+let currentFaceMap: FaceMapData | null = null;
+
+/** Get the face map from the last executeCode() call, if any. */
+export function getFaceMap(): FaceMapData | null {
+  return currentFaceMap;
+}
 
 // All SDF prototype methods that return new SDF nodes.
 // Patched during execution to track the last SDF produced by any operation,
@@ -99,6 +115,7 @@ export function executeCode(code: string): ExecuteResult {
   let meshSDF: SDF | null = null; // Track which SDF was explicitly meshed
   toolpathVisual = null; // Reset each execution
   gcodeText = null;
+  currentFaceMap = null;
 
   // Patch SDF.prototype methods to track the last SDF produced
   const originals = new Map<string, Function>();
@@ -328,6 +345,48 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   const bounds = new THREE.Box3();
   bounds.setFromBufferAttribute(geometry.getAttribute('position') as THREE.BufferAttribute);
 
+  // ─── Face classification (for hover status bar info) ───────────
+  if (sdf && triMesh.triangleCount <= 200_000) {
+    const faceIds = new Int32Array(triMesh.triangleCount);
+    const faceNames: string[] = [];
+    const faceNameToId = new Map<string, number>();
+    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>();
+
+    const allFaces = sdf.faces();
+    const faceByName = new Map(allFaces.map(f => [f.name, f]));
+
+    for (let i = 0; i < triMesh.triangleCount; i++) {
+      const base = i * 9;
+      const cx = (positions[base] + positions[base + 3] + positions[base + 6]) / 3;
+      const cy = (positions[base + 1] + positions[base + 4] + positions[base + 7]) / 3;
+      const cz = (positions[base + 2] + positions[base + 5] + positions[base + 8]) / 3;
+      const faceName = sdf.classifyPoint([cx, cy, cz]) ?? '__unknown__';
+
+      let id = faceNameToId.get(faceName);
+      if (id === undefined) {
+        id = faceNames.length;
+        faceNames.push(faceName);
+        faceNameToId.set(faceName, id);
+        const desc = faceByName.get(faceName);
+        if (desc) {
+          faceInfo.set(faceName, {
+            kind: desc.kind,
+            origin: desc.origin as [number, number, number] | undefined,
+            radius: desc.radius,
+            edgeBreakSize: desc.edgeBreakSize,
+            edgeBreakMode: desc.edgeBreakMode,
+          });
+        }
+      }
+      faceIds[i] = id;
+    }
+
+    const wallThickness = computeWallThicknesses(allFaces);
+    currentFaceMap = { faceIds, faceNames, faceInfo, wallThickness };
+  } else {
+    currentFaceMap = null;
+  }
+
   return {
     geometry,
     edges,
@@ -336,4 +395,27 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
     triangleCount: triMesh.triangleCount,
     bounds,
   };
+}
+
+/** Compute wall thickness for planar faces — distance to closest antiparallel face. */
+function computeWallThicknesses(allFaces: FaceDescriptor[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const face of allFaces) {
+    if (face.kind !== 'planar' || !face.origin) continue;
+    let minDist = Infinity;
+    for (const other of allFaces) {
+      if (other.name === face.name || other.kind !== 'planar' || !other.origin) continue;
+      const dot = face.normal[0] * other.normal[0] +
+                  face.normal[1] * other.normal[1] +
+                  face.normal[2] * other.normal[2];
+      if (dot > -0.99) continue;
+      const dx = other.origin[0] - face.origin[0];
+      const dy = other.origin[1] - face.origin[1];
+      const dz = other.origin[2] - face.origin[2];
+      const dist = Math.abs(dx * face.normal[0] + dy * face.normal[1] + dz * face.normal[2]);
+      if (dist < minDist) minDist = dist;
+    }
+    if (minDist < Infinity) result.set(face.name, minDist);
+  }
+  return result;
 }

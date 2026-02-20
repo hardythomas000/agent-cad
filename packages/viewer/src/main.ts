@@ -11,7 +11,7 @@ import { initSplitPane } from './split-pane.js';
 import { initDropZone } from './drop-zone.js';
 import { loadSTLFile, type LoadedModel } from './stl-loader.js';
 import { setView, fitCamera, type ViewPreset } from './view-presets.js';
-import { executeCode, isError, getToolpathVisual, getGCodeText, type ExecuteSuccess } from './kernel-bridge.js';
+import { executeCode, isError, getToolpathVisual, getGCodeText, getFaceMap, type ExecuteSuccess, type FaceMapData } from './kernel-bridge.js';
 import { getTheme, setTheme, onThemeChange, type ThemeMode } from './theme.js';
 
 // ─── DOM elements ──────────────────────────────────────────────
@@ -25,6 +25,7 @@ const fileInput = document.getElementById('file-input') as HTMLInputElement;
 const statusMode = document.getElementById('status-mode')!;
 const statusTris = document.getElementById('status-tris')!;
 const statusDims = document.getElementById('status-dims')!;
+const statusFace = document.getElementById('status-face')!;
 const emptyState = document.getElementById('empty-state')!;
 const editorError = document.getElementById('editor-error')!;
 const gcodeContent = document.getElementById('gcode-content')!;
@@ -350,5 +351,78 @@ document.querySelectorAll('.toolbar-btn[data-toggle]').forEach((btn) => {
         break;
     }
   });
+});
+
+// ─── Face hover info (status bar readout, no visual highlight) ───
+
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+let hoveredFaceId = -1;
+
+function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
+  const faceName = faceMap.faceNames[faceId];
+  if (!faceName || faceName === '__unknown__') {
+    statusFace.textContent = '';
+    return;
+  }
+  const info = faceMap.faceInfo.get(faceName);
+  let text = faceName;
+  if (info) {
+    text += ` (${info.kind})`;
+    if (info.radius != null) {
+      text += ` D=${(info.radius * 2).toFixed(1)}mm`;
+    } else if (info.edgeBreakSize != null) {
+      text += info.edgeBreakMode === 'fillet'
+        ? ` R=${info.edgeBreakSize.toFixed(1)}mm`
+        : ` size=${info.edgeBreakSize.toFixed(1)}mm`;
+    } else if (info.kind === 'planar') {
+      const wall = faceMap.wallThickness?.get(faceName);
+      if (wall != null) {
+        text += ` wall=${wall.toFixed(1)}mm`;
+      } else if (info.origin) {
+        const [x, y, z] = info.origin;
+        text += ` [${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}]`;
+      }
+    }
+  }
+  statusFace.textContent = text;
+}
+
+function onViewportMouseMove(e: MouseEvent): void {
+  const faceMap = getFaceMap();
+  if (!faceMap) return;
+  if (displayMode === 'wire') return;
+
+  const rect = viewportPane.getBoundingClientRect();
+  mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+  mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, ctx.activeCamera);
+  const intersects = raycaster.intersectObject(ctx.modelGroup, true);
+
+  if (intersects.length > 0 && intersects[0].faceIndex != null) {
+    const faceId = faceMap.faceIds[Math.floor(intersects[0].faceIndex)];
+    if (faceId !== hoveredFaceId) {
+      hoveredFaceId = faceId;
+      showFaceInfo(faceId, faceMap);
+    }
+  } else if (hoveredFaceId !== -1) {
+    hoveredFaceId = -1;
+    statusFace.textContent = '';
+  }
+}
+
+let rafPending = false;
+viewportPane.addEventListener('mousemove', (e) => {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { onViewportMouseMove(e); rafPending = false; });
+});
+
+viewportPane.addEventListener('mouseleave', () => {
+  if (hoveredFaceId !== -1) {
+    hoveredFaceId = -1;
+    statusFace.textContent = '';
+  }
 });
 
