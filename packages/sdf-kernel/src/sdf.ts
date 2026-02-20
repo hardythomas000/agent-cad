@@ -1044,6 +1044,8 @@ export class EdgeBreak extends SDF {
         name: `${this.featureName}.face`,
         normal: normalize(add(this.faceA.normal, this.faceB.normal)),
         kind: 'freeform' as const,
+        edgeBreakSize: this.size,
+        edgeBreakMode: this.mode,
       },
     ];
   }

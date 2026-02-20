@@ -389,13 +389,13 @@ function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
 - [x] Tests pass (~8 new → 11 new, 390 total)
 
 ### Phase 2: Dimension Readout
-- [ ] Hover over hole barrel → `hole_1.barrel (cylindrical) D=10.0mm`
-- [ ] Hover over box face with antiparallel pair → `right (planar) wall=100.0mm`
-- [ ] Hover over chamfer face → `chamfer_1.face (freeform) size=3.0mm`
-- [ ] Hover over fillet face → `fillet_1.face (freeform) R=5.0mm`
-- [ ] Hover over face with no special context → shows origin (current behavior preserved)
-- [ ] No crash for faces without antiparallel pairs
-- [ ] Wall thickness computation unit tests pass (~4 new)
+- [x] Hover over hole barrel → `hole_1.barrel (cylindrical) D=10.0mm`
+- [x] Hover over box face with antiparallel pair → `right (planar) wall=100.0mm`
+- [x] Hover over chamfer face → `chamfer_1.face (freeform) size=3.0mm`
+- [x] Hover over fillet face → `fillet_1.face (freeform) R=5.0mm`
+- [x] Hover over face with no special context → shows origin (current behavior preserved)
+- [x] No crash for faces without antiparallel pairs
+- [x] Wall thickness computation unit tests pass (7 new, 397 total)
 
 ---
 

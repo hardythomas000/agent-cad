@@ -29,6 +29,10 @@ export interface FaceDescriptor {
   radius?: number;
   /** For cylindrical/conical: axis direction */
   axis?: Vec3;
+  /** For edge break faces: chamfer size or fillet radius in mm */
+  edgeBreakSize?: number;
+  /** For edge break faces: 'chamfer' or 'fillet' */
+  edgeBreakMode?: 'chamfer' | 'fillet';
 }
 
 // ─── Edge types ──────────────────────────────────────────────

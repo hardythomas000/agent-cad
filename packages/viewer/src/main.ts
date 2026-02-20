@@ -422,11 +422,26 @@ function showFaceInfo(faceId: number, faceMap: FaceMapData): void {
   let text = faceName;
   if (info) {
     text += ` (${info.kind})`;
+
+    // Hole diameter (cylindrical faces)
     if (info.radius != null) {
-      text += ` R=${info.radius.toFixed(1)}`;
-    } else if (info.origin) {
-      const [x, y, z] = info.origin;
-      text += ` [${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}]`;
+      text += ` D=${(info.radius * 2).toFixed(1)}mm`;
+    }
+    // Chamfer/fillet size (edge break faces)
+    else if (info.edgeBreakSize != null) {
+      text += info.edgeBreakMode === 'fillet'
+        ? ` R=${info.edgeBreakSize.toFixed(1)}mm`
+        : ` size=${info.edgeBreakSize.toFixed(1)}mm`;
+    }
+    // Wall thickness or origin (planar faces)
+    else if (info.kind === 'planar') {
+      const wall = faceMap.wallThickness?.get(faceName);
+      if (wall != null) {
+        text += ` wall=${wall.toFixed(1)}mm`;
+      } else if (info.origin) {
+        const [x, y, z] = info.origin;
+        text += ` [${x.toFixed(0)}, ${y.toFixed(0)}, ${z.toFixed(0)}]`;
+      }
     }
   }
   statusFace.textContent = text;

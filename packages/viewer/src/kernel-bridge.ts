@@ -31,6 +31,7 @@ import {
   type HoleOptions,
   type PocketOptions,
   type BoltCircleOptions,
+  type FaceDescriptor,
 } from '@agent-cad/sdf-kernel';
 import { HEX } from './theme.js';
 import { renderToolpath } from './toolpath-renderer.js';
@@ -74,7 +75,8 @@ export function getGCodeText(): string | null {
 export interface FaceMapData {
   faceIds: Int32Array;        // per-triangle face index
   faceNames: string[];        // face index → face name
-  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>;
+  faceInfo: Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>;
+  wallThickness: Map<string, number>;  // faceName → distance to closest antiparallel face
 }
 
 let currentFaceMap: FaceMapData | null = null;
@@ -276,6 +278,29 @@ export function executeCode(code: string): ExecuteResult {
   }
 }
 
+/** Compute wall thickness for planar faces — distance to closest antiparallel face. */
+function computeWallThicknesses(allFaces: FaceDescriptor[]): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const face of allFaces) {
+    if (face.kind !== 'planar' || !face.origin) continue;
+    let minDist = Infinity;
+    for (const other of allFaces) {
+      if (other.name === face.name || other.kind !== 'planar' || !other.origin) continue;
+      const dot = face.normal[0] * other.normal[0] +
+                  face.normal[1] * other.normal[1] +
+                  face.normal[2] * other.normal[2];
+      if (dot > -0.99) continue; // Not antiparallel
+      const dx = other.origin[0] - face.origin[0];
+      const dy = other.origin[1] - face.origin[1];
+      const dz = other.origin[2] - face.origin[2];
+      const dist = Math.abs(dx * face.normal[0] + dy * face.normal[1] + dz * face.normal[2]);
+      if (dist < minDist) minDist = dist;
+    }
+    if (minDist < Infinity) result.set(face.name, minDist);
+  }
+  return result;
+}
+
 /** Convert kernel TriangleMesh to Three.js BufferGeometry + Mesh + Edges. */
 function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
   if (triMesh.triangleCount === 0) {
@@ -338,7 +363,7 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
     const faceIds = new Int32Array(triMesh.triangleCount);
     const faceNames: string[] = [];
     const faceNameToId = new Map<string, number>();
-    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number }>();
+    const faceInfo = new Map<string, { kind: string; origin?: [number, number, number]; radius?: number; edgeBreakSize?: number; edgeBreakMode?: string }>();
 
     // Pre-fetch all face descriptors for status bar info
     const allFaces = sdf.faces();
@@ -362,12 +387,18 @@ function meshToResult(triMesh: TriangleMesh, sdf?: SDF): ExecuteResult {
             kind: desc.kind,
             origin: desc.origin as [number, number, number] | undefined,
             radius: desc.radius,
+            edgeBreakSize: desc.edgeBreakSize,
+            edgeBreakMode: desc.edgeBreakMode,
           });
         }
       }
       faceIds[i] = id;
     }
-    currentFaceMap = { faceIds, faceNames, faceInfo };
+
+    // Compute wall thicknesses for planar faces
+    const wallThickness = computeWallThicknesses(allFaces);
+
+    currentFaceMap = { faceIds, faceNames, faceInfo, wallThickness };
   } else {
     currentFaceMap = null;
   }
